@@ -2,31 +2,74 @@ import Combine
 import Foundation
 import UIKit
 
+private enum SavedCanvasDocumentError: Error {
+    case imageDecodingFailed
+}
+
 @MainActor
 final class CanvasEditorDemoStore: ObservableObject {
     @Published private(set) var templates: [CanvasTemplate] = []
     @Published private(set) var savedDocument: SavedCanvasDocument?
+
+    private var persistenceRequestID = UUID()
 
     init() {
         loadTemplates()
         loadSavedDocument()
     }
 
-    func save(result: CanvasEditorResult) {
-        let folderURL = storageDirectory()
-        do {
-            try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true, attributes: nil)
-            try result.imageData.write(to: folderURL.appendingPathComponent("last-export.png"), options: .atomic)
-            try result.projectData.write(to: folderURL.appendingPathComponent("last-project.json"), options: .atomic)
-            loadSavedDocument()
-        } catch {
-            print("Canvas save error: \(error)")
+    func makeTransientDocument(
+        id: UUID = UUID(),
+        result: CanvasEditorResult,
+        previewImage: UIImage,
+        savedAt: Date = Date()
+    ) -> SavedCanvasDocument {
+        SavedCanvasDocument(
+            id: id,
+            imageURL: nil,
+            projectURL: nil,
+            previewImage: previewImage,
+            project: nil,
+            savedAt: savedAt,
+            imageByteCount: result.imageData.count,
+            projectByteCount: result.projectData.count,
+            nodeCount: nil,
+            canvasSize: nil,
+            containsInlineImages: nil,
+            isPersisted: false
+        )
+    }
+
+    func save(documentID: UUID, result: CanvasEditorResult) {
+        let requestID = UUID()
+        persistenceRequestID = requestID
+        let imageData = result.imageData
+        let projectData = result.projectData
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let document = try Self.persistDocument(
+                    documentID: documentID,
+                    imageData: imageData,
+                    projectData: projectData
+                )
+
+                DispatchQueue.main.async {
+                    guard self.persistenceRequestID == requestID else {
+                        return
+                    }
+                    self.savedDocument = document
+                }
+            } catch {
+                print("Canvas save error: \(error)")
+            }
         }
     }
 
     func clearSavedDocument() {
+        persistenceRequestID = UUID()
         let fileManager = FileManager.default
-        let folderURL = storageDirectory()
+        let folderURL = Self.storageDirectory()
         try? fileManager.removeItem(at: folderURL.appendingPathComponent("last-export.png"))
         try? fileManager.removeItem(at: folderURL.appendingPathComponent("last-project.json"))
         savedDocument = nil
@@ -47,42 +90,103 @@ final class CanvasEditorDemoStore: ObservableObject {
     }
 
     private func loadSavedDocument() {
-        let imageURL = storageDirectory().appendingPathComponent("last-export.png")
-        let projectURL = storageDirectory().appendingPathComponent("last-project.json")
+        let requestID = UUID()
+        persistenceRequestID = requestID
 
+        DispatchQueue.global(qos: .userInitiated).async {
+            let imageURL = Self.storageDirectory().appendingPathComponent("last-export.png")
+            let projectURL = Self.storageDirectory().appendingPathComponent("last-project.json")
+            let document = try? Self.buildSavedDocument(
+                documentID: UUID(),
+                imageURL: imageURL,
+                projectURL: projectURL
+            )
+
+            DispatchQueue.main.async {
+                guard self.persistenceRequestID == requestID else {
+                    return
+                }
+                self.savedDocument = document
+            }
+        }
+    }
+
+    nonisolated private static func persistDocument(
+        documentID: UUID,
+        imageData: Data,
+        projectData: Data
+    ) throws -> SavedCanvasDocument {
+        let folderURL = storageDirectory()
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true, attributes: nil)
+
+        let imageURL = folderURL.appendingPathComponent("last-export.png")
+        let projectURL = folderURL.appendingPathComponent("last-project.json")
+        try imageData.write(to: imageURL, options: .atomic)
+        try projectData.write(to: projectURL, options: .atomic)
+
+        return try buildSavedDocument(
+            documentID: documentID,
+            imageURL: imageURL,
+            projectURL: projectURL
+        )
+    }
+
+    nonisolated private static func buildSavedDocument(
+        documentID: UUID,
+        imageURL: URL,
+        projectURL: URL
+    ) throws -> SavedCanvasDocument {
         guard let imageData = try? Data(contentsOf: imageURL),
-              let projectData = try? Data(contentsOf: projectURL),
-              let previewImage = UIImage(data: imageData) else {
-            savedDocument = nil
-            return
+              let projectData = try? Data(contentsOf: projectURL) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+
+        guard let previewImage = UIImage(data: imageData) else {
+            throw SavedCanvasDocumentError.imageDecodingFailed
         }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let project = try? decoder.decode(CanvasProject.self, from: projectData)
+        let summary = project?.summary
         let savedAt = ((try? projectURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate) ?? Date()
-        savedDocument = SavedCanvasDocument(
+
+        return SavedCanvasDocument(
+            id: documentID,
+            imageURL: imageURL,
+            projectURL: projectURL,
             previewImage: previewImage,
-            imageData: imageData,
-            projectData: projectData,
             project: project,
-            savedAt: savedAt
+            savedAt: savedAt,
+            imageByteCount: imageData.count,
+            projectByteCount: projectData.count,
+            nodeCount: summary?.nodeCount,
+            canvasSize: summary?.canvasSize,
+            containsInlineImages: summary?.containsInlineImages,
+            isPersisted: true
         )
     }
 
-    private func storageDirectory() -> URL {
+    nonisolated private static func storageDirectory() -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CanvasEditorDemo", isDirectory: true)
     }
 }
 
 struct SavedCanvasDocument: Identifiable {
-    let id = UUID()
+    let id: UUID
+    let imageURL: URL?
+    let projectURL: URL?
     let previewImage: UIImage
-    let imageData: Data
-    let projectData: Data
     let project: CanvasProject?
     let savedAt: Date
+    let imageByteCount: Int
+    let projectByteCount: Int
+    let nodeCount: Int?
+    let canvasSize: CanvasSize?
+    let containsInlineImages: Bool?
+    let isPersisted: Bool
 }
 
 private enum CanvasTemplateFallbacks {

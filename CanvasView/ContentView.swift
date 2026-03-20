@@ -1,4 +1,6 @@
+import Combine
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var demoStore = CanvasEditorDemoStore()
@@ -40,20 +42,28 @@ struct ContentView: View {
                     activeEditor = nil
                 },
                 onExport: { result, image in
-                    demoStore.save(result: result)
-                    previewDocument = demoStore.savedDocument ?? SavedCanvasDocument(
-                        previewImage: image,
-                        imageData: result.imageData,
-                        projectData: result.projectData,
-                        project: nil,
-                        savedAt: Date()
+                    let documentID = UUID()
+                    let transientDocument = demoStore.makeTransientDocument(
+                        id: documentID,
+                        result: result,
+                        previewImage: image
                     )
+                    demoStore.save(documentID: documentID, result: result)
                     activeEditor = nil
+                    DispatchQueue.main.async {
+                        previewDocument = transientDocument
+                    }
                 }
             )
         }
         .sheet(item: $previewDocument) { document in
             ResultPreviewSheet(document: document)
+        }
+        .onReceive(demoStore.$savedDocument.compactMap { $0 }) { document in
+            guard previewDocument?.id == document.id else {
+                return
+            }
+            previewDocument = document
         }
     }
 
@@ -236,6 +246,7 @@ private struct ActionButtonStyle: ButtonStyle {
 
 private struct ResultPreviewSheet: View {
     let document: SavedCanvasDocument
+    @State private var sharedResource: SharedResource?
 
     var body: some View {
         NavigationStack {
@@ -246,27 +257,121 @@ private struct ResultPreviewSheet: View {
                         .scaledToFit()
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
-                    Text("Project JSON")
+                    Text("Export Summary")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
 
-                    Text(prettyPrintedJSON)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .fill(Color.black.opacity(0.06))
+                    VStack(alignment: .leading, spacing: 12) {
+                        SummaryRow(title: "Status", value: document.isPersisted ? "Saved" : "Saving in background...")
+                        SummaryRow(title: "Canvas", value: formattedCanvasSize)
+                        SummaryRow(title: "Layers", value: formattedNodeCount)
+                        SummaryRow(title: "PNG Size", value: formatByteCount(document.imageByteCount))
+                        SummaryRow(title: "JSON Size", value: formatByteCount(document.projectByteCount))
+                        SummaryRow(title: "Inline Images", value: inlineImageStatus)
+                        SummaryRow(
+                            title: "Saved At",
+                            value: document.savedAt.formatted(date: .abbreviated, time: .shortened)
                         )
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Color.black.opacity(0.06))
+                    )
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button("Open/Share PNG") {
+                            guard let imageURL = document.imageURL else {
+                                return
+                            }
+                            sharedResource = SharedResource(name: "PNG Export", url: imageURL)
+                        }
+                        .buttonStyle(ActionButtonStyle(fill: Color.white))
+                        .disabled(document.imageURL == nil)
+
+                        Button("Open/Share JSON") {
+                            guard let projectURL = document.projectURL else {
+                                return
+                            }
+                            sharedResource = SharedResource(name: "Project JSON", url: projectURL)
+                        }
+                        .buttonStyle(ActionButtonStyle(fill: Color(red: 0.27, green: 0.72, blue: 1)))
+                        .disabled(document.projectURL == nil)
+
+                        if !document.isPersisted {
+                            Text("Files are still being written and indexed. Share actions unlock automatically when save completes.")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding(20)
             }
             .navigationTitle("Export Preview")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $sharedResource) { resource in
+                ActivityView(activityItems: [resource.url])
+            }
         }
     }
 
-    private var prettyPrintedJSON: String {
-        String(data: document.projectData, encoding: .utf8) ?? "Unable to decode JSON"
+    private var formattedCanvasSize: String {
+        guard let canvasSize = document.canvasSize else {
+            return "Preparing summary..."
+        }
+        return "\(Int(canvasSize.width)) x \(Int(canvasSize.height))"
     }
+
+    private var formattedNodeCount: String {
+        guard let nodeCount = document.nodeCount else {
+            return "Preparing summary..."
+        }
+        return "\(nodeCount)"
+    }
+
+    private var inlineImageStatus: String {
+        guard let containsInlineImages = document.containsInlineImages else {
+            return "Preparing summary..."
+        }
+        return containsInlineImages ? "Yes" : "No"
+    }
+
+    private func formatByteCount(_ byteCount: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+    }
+}
+
+private struct SummaryRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .frame(width: 96, alignment: .leading)
+
+            Text(value)
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct SharedResource: Identifiable {
+    let id = UUID()
+    let name: String
+    let url: URL
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

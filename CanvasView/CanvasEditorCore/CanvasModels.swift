@@ -257,6 +257,20 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
     public var style: CanvasTextStyle?
     public var isEditable: Bool
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case name
+        case transform
+        case size
+        case zIndex
+        case opacity
+        case source
+        case text
+        case style
+        case isEditable
+    }
+
     public init(
         id: String = UUID().uuidString,
         kind: CanvasNodeKind,
@@ -281,6 +295,36 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         self.text = text
         self.style = style
         self.isEditable = isEditable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        kind = try container.decode(CanvasNodeKind.self, forKey: .kind)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        transform = try container.decode(CanvasTransform.self, forKey: .transform)
+        size = try container.decode(CanvasSize.self, forKey: .size)
+        zIndex = try container.decode(Int.self, forKey: .zIndex)
+        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        source = try container.decodeIfPresent(CanvasAssetSource.self, forKey: .source)
+        text = try container.decodeIfPresent(String.self, forKey: .text)
+        style = try container.decodeIfPresent(CanvasTextStyle.self, forKey: .style)
+        isEditable = try container.decodeIfPresent(Bool.self, forKey: .isEditable) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encode(transform, forKey: .transform)
+        try container.encode(size, forKey: .size)
+        try container.encode(zIndex, forKey: .zIndex)
+        try container.encode(opacity, forKey: .opacity)
+        try container.encodeIfPresent(source, forKey: .source)
+        try container.encodeIfPresent(text, forKey: .text)
+        try container.encodeIfPresent(style, forKey: .style)
+        try container.encode(isEditable, forKey: .isEditable)
     }
 }
 

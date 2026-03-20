@@ -34,7 +34,11 @@ public final class CanvasEditorStore {
     }
 
     public var selectedNode: CanvasNode? {
-        project.nodes.first(where: { $0.id == selectedNodeID })
+        project.nodes.first(where: { $0.id == selectedNodeID && $0.isEditable })
+    }
+
+    public var layerPanelNodes: [CanvasNode] {
+        Array(project.sortedNodes.reversed())
     }
 
     public var canUndo: Bool { history.canUndo }
@@ -70,10 +74,58 @@ public final class CanvasEditorStore {
     }
 
     public func selectNode(_ id: String?) {
-        guard id == nil || project.nodes.contains(where: { $0.id == id }) else {
+        guard id == nil || project.nodes.contains(where: { $0.id == id && $0.isEditable }) else {
             return
         }
         selectedNodeID = id
+    }
+
+    public func toggleNodeLock(_ nodeID: String) {
+        guard let node = project.nodes.first(where: { $0.id == nodeID }) else {
+            return
+        }
+
+        let shouldClearSelection = selectedNodeID == nodeID && node.isEditable
+        guard commitMutation({ project in
+            guard let index = project.nodes.firstIndex(where: { $0.id == nodeID }) else {
+                return false
+            }
+            project.nodes[index].isEditable.toggle()
+            return true
+        }) else {
+            return
+        }
+
+        if shouldClearSelection {
+            selectedNodeID = nil
+        } else {
+            clearSelectionIfNeeded()
+        }
+    }
+
+    public func moveNodeInLayerPanel(from sourceIndex: Int, to destinationIndex: Int) {
+        let nodes = layerPanelNodes
+        guard nodes.indices.contains(sourceIndex),
+              nodes.indices.contains(destinationIndex) else {
+            return
+        }
+
+        guard destinationIndex != sourceIndex else {
+            return
+        }
+
+        _ = commitMutation { project in
+            var topToBottomNodes = Array(project.sortedNodes.reversed())
+            let movingNode = topToBottomNodes.remove(at: sourceIndex)
+            topToBottomNodes.insert(movingNode, at: destinationIndex)
+            project.nodes = Array(topToBottomNodes.reversed().enumerated().map { index, node in
+                var copy = node
+                copy.zIndex = index
+                return copy
+            })
+            return true
+        }
+        clearSelectionIfNeeded()
     }
 
     public func addTextNode(text: String = "") {
@@ -227,7 +279,7 @@ public final class CanvasEditorStore {
     }
 
     public func duplicateSelectedNode() {
-        guard var node = selectedNode else {
+        guard var node = selectedNode, node.isEditable else {
             return
         }
         node.id = UUID().uuidString
@@ -239,7 +291,8 @@ public final class CanvasEditorStore {
     }
 
     public func deleteSelectedNode() {
-        guard let selectedNodeID else {
+        guard let selectedNodeID,
+              project.nodes.contains(where: { $0.id == selectedNodeID && $0.isEditable }) else {
             return
         }
         commitSelectionMutation(selectedNodeID: nil) { project in
@@ -250,7 +303,8 @@ public final class CanvasEditorStore {
     }
 
     public func bringSelectedNodeToFront() {
-        guard let selectedNodeID else {
+        guard let selectedNodeID,
+              project.nodes.contains(where: { $0.id == selectedNodeID && $0.isEditable }) else {
             return
         }
         _ = commitMutation { project in
@@ -265,7 +319,8 @@ public final class CanvasEditorStore {
     }
 
     public func sendSelectedNodeToBack() {
-        guard let selectedNodeID else {
+        guard let selectedNodeID,
+              project.nodes.contains(where: { $0.id == selectedNodeID && $0.isEditable }) else {
             return
         }
         _ = commitMutation { project in
@@ -284,9 +339,7 @@ public final class CanvasEditorStore {
             return
         }
         project = previous
-        if let selectedNodeID, !project.nodes.contains(where: { $0.id == selectedNodeID }) {
-            self.selectedNodeID = nil
-        }
+        clearSelectionIfNeeded()
     }
 
     public func redo() {
@@ -294,9 +347,7 @@ public final class CanvasEditorStore {
             return
         }
         project = next
-        if let selectedNodeID, !project.nodes.contains(where: { $0.id == selectedNodeID }) {
-            self.selectedNodeID = nil
-        }
+        clearSelectionIfNeeded()
     }
 
     public func encodedProjectData(prettyPrinted: Bool = true) throws -> Data {
@@ -321,7 +372,8 @@ public final class CanvasEditorStore {
         }
 
         commitMutation { project in
-            guard let index = project.nodes.firstIndex(where: { $0.id == selectedNodeID }) else {
+            guard let index = project.nodes.firstIndex(where: { $0.id == selectedNodeID }),
+                  project.nodes[index].isEditable else {
                 return false
             }
             mutation(&project.nodes[index])
@@ -351,6 +403,14 @@ public final class CanvasEditorStore {
         project = workingCopy
         return true
     }
+
+    private func clearSelectionIfNeeded() {
+        if let selectedNodeID,
+           !project.nodes.contains(where: { $0.id == selectedNodeID && $0.isEditable }) {
+            self.selectedNodeID = nil
+        }
+    }
+
     private func nextZIndex() -> Int {
         (project.nodes.map(\.zIndex).max() ?? -1) + 1
     }

@@ -5,6 +5,7 @@ final class CanvasNodeView: UIView {
     private let imageView = UIImageView()
     private let placeholderView = UIView()
     private let placeholderLabel = UILabel()
+    private let loadingIndicator = UIActivityIndicatorView(style: .medium)
 
     private(set) var nodeID: String?
 
@@ -29,8 +30,12 @@ final class CanvasNodeView: UIView {
         placeholderLabel.textColor = UIColor.white.withAlphaComponent(0.8)
         placeholderLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
 
+        loadingIndicator.color = .white
+        loadingIndicator.hidesWhenStopped = true
+
         addSubview(placeholderView)
         placeholderView.addSubview(placeholderLabel)
+        placeholderView.addSubview(loadingIndicator)
         addSubview(imageView)
         addSubview(textLabel)
     }
@@ -47,6 +52,7 @@ final class CanvasNodeView: UIView {
         imageView.frame = bounds
         placeholderView.frame = bounds
         placeholderLabel.frame = placeholderView.bounds.insetBy(dx: 12, dy: 12)
+        loadingIndicator.center = CGPoint(x: placeholderView.bounds.midX, y: placeholderView.bounds.midY - 10)
         placeholderView.layer.cornerRadius = max(18, min(bounds.width, bounds.height) * 0.12)
     }
 
@@ -85,6 +91,8 @@ final class CanvasNodeView: UIView {
         placeholderView.isHidden = false
         imageView.image = nil
         imageView.tintColor = node.style?.foregroundColor.uiColor ?? .white
+        placeholderLabel.text = "Loading..."
+        loadingIndicator.startAnimating()
 
         if node.source?.kind == .symbol {
             imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
@@ -102,6 +110,8 @@ final class CanvasNodeView: UIView {
                 return
             }
             self.imageView.image = image
+            self.loadingIndicator.stopAnimating()
+            self.placeholderLabel.text = image == nil ? "Image" : ""
             self.placeholderView.isHidden = image != nil
         }
     }

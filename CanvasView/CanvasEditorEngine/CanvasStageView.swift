@@ -37,6 +37,9 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     private var canvasSize: CGSize = .zero
     private var canvasScale: CGFloat = 1
     private var activePanTranslation: CGPoint = .zero
+    private var activePanNodeID: String?
+    private var activePinchNodeID: String?
+    private var activeRotationNodeID: String?
     private var lastTransformVector: CGPoint?
     private var lastTextWidthTranslation: CGPoint = .zero
     private var lastTextHeightTranslation: CGPoint = .zero
@@ -184,7 +187,9 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     }
 
     func beginInlineEditingForSelectedNode(placeCursorAtEnd: Bool = true) {
-        guard let node = store?.selectedNode, node.kind == .text || node.kind == .emoji else {
+        guard let node = store?.selectedNode,
+              node.isEditable,
+              node.kind == .text || node.kind == .emoji else {
             return
         }
         editingNodeID = node.id
@@ -293,6 +298,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         switch gestureRecognizer.state {
         case .began:
             activePanTranslation = .zero
+            activePanNodeID = nil
             let location = gestureRecognizer.location(in: canvasContainerView)
             if let node = hitTestNode(at: location) {
                 if editingNodeID != nil, editingNodeID != node.id {
@@ -300,10 +306,12 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
                 }
                 delegate?.canvasStageViewDidBeginNodeManipulation(self)
                 store.selectNode(node.id)
+                activePanNodeID = node.id
             }
 
         case .changed:
-            guard store.selectedNode != nil else {
+            guard activePanNodeID == store.selectedNodeID,
+                  store.selectedNode?.isEditable == true else {
                 return
             }
             let translation = gestureRecognizer.translation(in: self)
@@ -316,6 +324,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
 
         default:
             activePanTranslation = .zero
+            activePanNodeID = nil
         }
     }
 
@@ -326,6 +335,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         }
 
         if gestureRecognizer.state == .began {
+            activePinchNodeID = nil
             let location = gestureRecognizer.location(in: canvasContainerView)
             if let node = hitTestNode(at: location) {
                 if editingNodeID != nil, editingNodeID != node.id {
@@ -333,15 +343,24 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
                 }
                 delegate?.canvasStageViewDidBeginNodeManipulation(self)
                 store.selectNode(node.id)
+                activePinchNodeID = node.id
             }
         }
 
-        guard store.selectedNode != nil else {
-            return
-        }
+        switch gestureRecognizer.state {
+        case .changed:
+            guard activePinchNodeID == store.selectedNodeID,
+                  store.selectedNode?.isEditable == true else {
+                return
+            }
+            store.scaleSelectedNode(by: gestureRecognizer.scale)
+            gestureRecognizer.scale = 1
 
-        store.scaleSelectedNode(by: gestureRecognizer.scale)
-        gestureRecognizer.scale = 1
+        default:
+            if gestureRecognizer.state == .ended || gestureRecognizer.state == .cancelled || gestureRecognizer.state == .failed {
+                activePinchNodeID = nil
+            }
+        }
     }
 
     @objc
@@ -351,6 +370,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         }
 
         if gestureRecognizer.state == .began {
+            activeRotationNodeID = nil
             let location = gestureRecognizer.location(in: canvasContainerView)
             if let node = hitTestNode(at: location) {
                 if editingNodeID != nil, editingNodeID != node.id {
@@ -358,15 +378,24 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
                 }
                 delegate?.canvasStageViewDidBeginNodeManipulation(self)
                 store.selectNode(node.id)
+                activeRotationNodeID = node.id
             }
         }
 
-        guard store.selectedNode != nil else {
-            return
-        }
+        switch gestureRecognizer.state {
+        case .changed:
+            guard activeRotationNodeID == store.selectedNodeID,
+                  store.selectedNode?.isEditable == true else {
+                return
+            }
+            store.rotateSelectedNode(by: gestureRecognizer.rotation)
+            gestureRecognizer.rotation = 0
 
-        store.rotateSelectedNode(by: gestureRecognizer.rotation)
-        gestureRecognizer.rotation = 0
+        default:
+            if gestureRecognizer.state == .ended || gestureRecognizer.state == .cancelled || gestureRecognizer.state == .failed {
+                activeRotationNodeID = nil
+            }
+        }
     }
 
     @objc
@@ -621,6 +650,9 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         }
 
         for node in store.project.sortedNodes.reversed() {
+            guard node.isEditable else {
+                continue
+            }
             guard let nodeView = nodeViews[node.id], !nodeView.isHidden else {
                 continue
             }
