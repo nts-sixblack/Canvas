@@ -1,0 +1,121 @@
+{
+  "id" : "poster-45",
+  "name" : "Poster 4:5",
+  "version" : 1,
+  "canvasSize" : {
+    "width" : 1080,
+    "height" : 1350
+  },
+  "background" : {
+    "kind" : "solidColor",
+    "color" : {
+      "red" : 0.0588235294,
+      "green" : 0.1019607843,
+      "blue" : 0.062745098,
+      "alpha" : 1
+    }
+  },
+  "nodes" : [
+    {
+      "id" : "poster-title",
+      "kind" : "text",
+      "name" : "Poster",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 210
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 860,
+        "height" : 220
+      },
+      "zIndex" : 0,
+      "opacity" : 1,
+      "text" : "Weekend launch",
+      "style" : {
+        "fontFamily" : "Helvetica Neue",
+        "weight" : "heavy",
+        "isItalic" : false,
+        "fontSize" : 84,
+        "foregroundColor" : {
+          "red" : 0.1647058824,
+          "green" : 0.7803921569,
+          "blue" : 0.6274509804,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : -1,
+        "lineSpacing" : 2,
+        "opacity" : 1
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "poster-heart",
+      "kind" : "sticker",
+      "name" : "Heart",
+      "transform" : {
+        "position" : {
+          "x" : 190,
+          "y" : 1130
+        },
+        "rotation" : 0.2,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 180,
+        "height" : 180
+      },
+      "zIndex" : 1,
+      "opacity" : 1,
+      "source" : {
+        "kind" : "symbol",
+        "name" : "heart.fill"
+      },
+      "style" : {
+        "fontFamily" : "Avenir Next",
+        "weight" : "bold",
+        "isItalic" : false,
+        "fontSize" : 40,
+        "foregroundColor" : {
+          "red" : 1,
+          "green" : 0.4156862745,
+          "blue" : 0.2392156863,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : 0,
+        "lineSpacing" : 0,
+        "opacity" : 1
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "poster-image",
+      "kind" : "image",
+      "name" : "Preview",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 790
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 820,
+        "height" : 820
+      },
+      "zIndex" : 2,
+      "opacity" : 1,
+      "source" : {
+        "kind" : "remoteURL",
+        "url" : "https://picsum.photos/seed/canvas-poster/900/900"
+      },
+      "isEditable" : true
+    }
+  ]
+}

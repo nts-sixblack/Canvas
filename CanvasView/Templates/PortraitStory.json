@@ -1,0 +1,137 @@
+{
+  "id" : "portrait-story",
+  "name" : "Portrait Story",
+  "version" : 1,
+  "canvasSize" : {
+    "width" : 1080,
+    "height" : 1920
+  },
+  "background" : {
+    "kind" : "solidColor",
+    "color" : {
+      "red" : 0.0980392157,
+      "green" : 0.0549019608,
+      "blue" : 0.1725490196,
+      "alpha" : 1
+    }
+  },
+  "nodes" : [
+    {
+      "id" : "portrait-image",
+      "kind" : "image",
+      "name" : "Mood",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 720
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 900,
+        "height" : 1080
+      },
+      "zIndex" : 0,
+      "opacity" : 1,
+      "source" : {
+        "kind" : "remoteURL",
+        "url" : "https://picsum.photos/seed/canvas-portrait/900/1200"
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "portrait-emoji",
+      "kind" : "emoji",
+      "name" : "Emoji",
+      "transform" : {
+        "position" : {
+          "x" : 230,
+          "y" : 260
+        },
+        "rotation" : -0.2,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 220,
+        "height" : 220
+      },
+      "zIndex" : 1,
+      "opacity" : 1,
+      "text" : "🌙",
+      "style" : {
+        "fontFamily" : "Apple Color Emoji",
+        "weight" : "regular",
+        "isItalic" : false,
+        "fontSize" : 72,
+        "foregroundColor" : {
+          "red" : 1,
+          "green" : 1,
+          "blue" : 1,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : 0,
+        "lineSpacing" : 0,
+        "opacity" : 1
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "portrait-copy",
+      "kind" : "text",
+      "name" : "Story",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 1510
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 820,
+        "height" : 260
+      },
+      "zIndex" : 2,
+      "opacity" : 1,
+      "text" : "Tonight feels electric",
+      "style" : {
+        "fontFamily" : "Georgia",
+        "weight" : "bold",
+        "isItalic" : false,
+        "fontSize" : 68,
+        "foregroundColor" : {
+          "red" : 1,
+          "green" : 1,
+          "blue" : 1,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : 0.5,
+        "lineSpacing" : 10,
+        "shadow" : {
+          "color" : {
+            "red" : 0,
+            "green" : 0,
+            "blue" : 0,
+            "alpha" : 1
+          },
+          "radius" : 20,
+          "offsetX" : 0,
+          "offsetY" : 10
+        },
+        "backgroundFill" : {
+          "color" : {
+            "red" : 0,
+            "green" : 0,
+            "blue" : 0,
+            "alpha" : 0.5
+          }
+        },
+        "opacity" : 1
+      },
+      "isEditable" : true
+    }
+  ]
+}

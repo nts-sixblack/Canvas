@@ -1,0 +1,141 @@
+{
+  "id" : "square-vibes",
+  "name" : "Square Vibes",
+  "version" : 1,
+  "canvasSize" : {
+    "width" : 1080,
+    "height" : 1080
+  },
+  "background" : {
+    "kind" : "solidColor",
+    "color" : {
+      "red" : 0.0745098039,
+      "green" : 0.1333333333,
+      "blue" : 0.2196078431,
+      "alpha" : 1
+    }
+  },
+  "nodes" : [
+    {
+      "id" : "square-image",
+      "kind" : "image",
+      "name" : "Hero",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 520
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 760,
+        "height" : 760
+      },
+      "zIndex" : 0,
+      "opacity" : 1,
+      "source" : {
+        "kind" : "remoteURL",
+        "url" : "https://picsum.photos/seed/canvas-square/900/900"
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "square-title",
+      "kind" : "text",
+      "name" : "Headline",
+      "transform" : {
+        "position" : {
+          "x" : 540,
+          "y" : 180
+        },
+        "rotation" : 0,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 760,
+        "height" : 180
+      },
+      "zIndex" : 1,
+      "opacity" : 1,
+      "text" : "NEW DROP",
+      "style" : {
+        "fontFamily" : "Avenir Next",
+        "weight" : "heavy",
+        "isItalic" : false,
+        "fontSize" : 76,
+        "foregroundColor" : {
+          "red" : 1,
+          "green" : 1,
+          "blue" : 1,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : 2,
+        "lineSpacing" : 0,
+        "shadow" : {
+          "color" : {
+            "red" : 0,
+            "green" : 0,
+            "blue" : 0,
+            "alpha" : 1
+          },
+          "radius" : 20,
+          "offsetX" : 0,
+          "offsetY" : 12
+        },
+        "outline" : {
+          "color" : {
+            "red" : 1,
+            "green" : 0.4156862745,
+            "blue" : 0.2392156863,
+            "alpha" : 1
+          },
+          "width" : 8
+        },
+        "opacity" : 1
+      },
+      "isEditable" : true
+    },
+    {
+      "id" : "square-sticker",
+      "kind" : "sticker",
+      "name" : "Sparkles",
+      "transform" : {
+        "position" : {
+          "x" : 875,
+          "y" : 860
+        },
+        "rotation" : -0.15,
+        "scale" : 1
+      },
+      "size" : {
+        "width" : 180,
+        "height" : 180
+      },
+      "zIndex" : 2,
+      "opacity" : 1,
+      "source" : {
+        "kind" : "symbol",
+        "name" : "sparkles"
+      },
+      "style" : {
+        "fontFamily" : "Avenir Next",
+        "weight" : "bold",
+        "isItalic" : false,
+        "fontSize" : 40,
+        "foregroundColor" : {
+          "red" : 1,
+          "green" : 0.8,
+          "blue" : 0.2784313725,
+          "alpha" : 1
+        },
+        "alignment" : "center",
+        "letterSpacing" : 0,
+        "lineSpacing" : 0,
+        "opacity" : 1
+      },
+      "isEditable" : true
+    }
+  ]
+}
