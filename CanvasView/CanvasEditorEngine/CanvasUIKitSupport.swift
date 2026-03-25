@@ -11,6 +11,126 @@ extension CanvasColor {
     }
 }
 
+extension CanvasShapeType {
+    var systemImageName: String {
+        switch self {
+        case .brush:
+            return "paintbrush"
+        case .line:
+            return "line.diagonal"
+        case .arrow:
+            return "arrow.up.right"
+        case .oval:
+            return "circle"
+        case .rectangle:
+            return "square"
+        }
+    }
+}
+
+enum CanvasShapePathBuilder {
+    static func localPoints(for payload: CanvasShapePayload) -> [CGPoint] {
+        payload.points.map(\.cgPoint)
+    }
+
+    static func makePath(type: CanvasShapeType, points: [CGPoint]) -> UIBezierPath {
+        let path = UIBezierPath()
+
+        switch type {
+        case .brush:
+            guard let first = points.first else {
+                return path
+            }
+            path.move(to: first)
+            if points.count == 1 {
+                path.addLine(to: first)
+            } else {
+                for point in points.dropFirst() {
+                    path.addLine(to: point)
+                }
+            }
+
+        case .line:
+            guard let first = points.first, let last = points.last else {
+                return path
+            }
+            path.move(to: first)
+            path.addLine(to: last)
+
+        case .arrow:
+            guard let first = points.first, let last = points.last else {
+                return path
+            }
+            path.move(to: first)
+            path.addLine(to: last)
+
+            let deltaX = last.x - first.x
+            let deltaY = last.y - first.y
+            let length = max(hypot(deltaX, deltaY), 0.001)
+            let baseAngle = atan2(deltaY, deltaX)
+            let headLength = max(length * 0.16, 18)
+            let arrowAngle = CGFloat.pi / 6
+            let leftPoint = CGPoint(
+                x: last.x - cos(baseAngle - arrowAngle) * headLength,
+                y: last.y - sin(baseAngle - arrowAngle) * headLength
+            )
+            let rightPoint = CGPoint(
+                x: last.x - cos(baseAngle + arrowAngle) * headLength,
+                y: last.y - sin(baseAngle + arrowAngle) * headLength
+            )
+
+            path.move(to: last)
+            path.addLine(to: leftPoint)
+            path.move(to: last)
+            path.addLine(to: rightPoint)
+
+        case .oval:
+            let rect = rect(for: points)
+            if rect.isNull {
+                return path
+            }
+            path.append(UIBezierPath(ovalIn: rect))
+
+        case .rectangle:
+            let rect = rect(for: points)
+            if rect.isNull {
+                return path
+            }
+            path.append(UIBezierPath(rect: rect))
+        }
+
+        return path
+    }
+
+    private static func rect(for points: [CGPoint]) -> CGRect {
+        if points.count == 2, let first = points.first, let last = points.last {
+            return CGRect(
+                x: min(first.x, last.x),
+                y: min(first.y, last.y),
+                width: abs(last.x - first.x),
+                height: abs(last.y - first.y)
+            )
+        }
+
+        guard !points.isEmpty else {
+            return .null
+        }
+
+        return points.reduce(into: CGRect.null) { partialResult, point in
+            partialResult = partialResult.union(CGRect(origin: point, size: .zero))
+        }
+    }
+}
+
+extension CanvasShapePayload {
+    func bezierPath() -> UIBezierPath {
+        CanvasShapePathBuilder.makePath(
+            type: type,
+            points: CanvasShapePathBuilder.localPoints(for: self)
+        )
+    }
+}
+
 extension CanvasTextAlignment {
     var nsTextAlignment: NSTextAlignment {
         switch self {

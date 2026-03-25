@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public final class CanvasEditorStore {
@@ -129,42 +130,79 @@ public final class CanvasEditorStore {
     }
 
     public func addTextNode(text: String = "") {
-        let node = CanvasNode(
-            kind: .text,
-            name: "Text",
-            transform: CanvasTransform(position: defaultNodePosition()),
-            size: CanvasSize(width: 260, height: 140),
-            zIndex: nextZIndex(),
-            text: text,
-            style: .defaultText
+        addNode(
+            CanvasNode(
+                kind: .text,
+                name: "Text",
+                transform: CanvasTransform(position: defaultNodePosition()),
+                size: CanvasSize(width: 260, height: 140),
+                zIndex: nextZIndex(),
+                text: text,
+                style: .defaultText
+            )
         )
-        addNode(node)
     }
 
     public func addEmojiNode(text: String = "✨") {
-        let node = CanvasNode(
-            kind: .emoji,
-            name: "Emoji",
-            transform: CanvasTransform(position: defaultNodePosition()),
-            size: CanvasSize(width: 160, height: 160),
-            zIndex: nextZIndex(),
-            text: text,
-            style: .defaultEmoji
-        )
-        addNode(node)
+        addEmojiNodes(texts: [text])
+    }
+
+    public func addEmojiNodes(texts: [String]) {
+        let normalizedTexts = texts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !normalizedTexts.isEmpty else {
+            return
+        }
+
+        let baseZIndex = nextZIndex()
+        let nodes = normalizedTexts.enumerated().map { index, text in
+            CanvasNode(
+                kind: .emoji,
+                name: "Emoji",
+                transform: CanvasTransform(position: defaultImportedNodePosition(for: index)),
+                size: CanvasSize(width: 160, height: 160),
+                zIndex: baseZIndex + index,
+                text: text,
+                style: .defaultEmoji
+            )
+        }
+        addNodes(nodes)
     }
 
     public func addStickerNode(source: CanvasAssetSource? = nil) {
+        let resolvedSource = source ?? configuration.stickerCatalog.first?.source
+        let baseZIndex = nextZIndex()
         let node = CanvasNode(
             kind: .sticker,
             name: "Sticker",
             transform: CanvasTransform(position: defaultNodePosition()),
             size: CanvasSize(width: 180, height: 180),
-            zIndex: nextZIndex(),
-            source: source ?? configuration.stickerCatalog.first?.source,
+            zIndex: baseZIndex,
+            source: resolvedSource,
             style: CanvasTextStyle.defaultText
         )
         addNode(node)
+    }
+
+    public func addStickerNodes(sources: [CanvasAssetSource]) {
+        guard !sources.isEmpty else {
+            return
+        }
+
+        let baseZIndex = nextZIndex()
+        let nodes = sources.enumerated().map { index, source in
+            CanvasNode(
+                kind: .sticker,
+                name: "Sticker",
+                transform: CanvasTransform(position: defaultImportedNodePosition(for: index)),
+                size: CanvasSize(width: 180, height: 180),
+                zIndex: baseZIndex + index,
+                source: source,
+                style: CanvasTextStyle.defaultText
+            )
+        }
+        addNodes(nodes)
     }
 
     public func addImageNode(source: CanvasAssetSource, intrinsicSize: CanvasSize? = nil) {
@@ -177,6 +215,34 @@ public final class CanvasEditorStore {
             source: source
         )
         addNode(node)
+    }
+
+    public func addShapeNode(from draft: CanvasShapeDraft) {
+        guard let normalizedShape = normalizeShapeNode(from: draft) else {
+            return
+        }
+
+        let node = CanvasNode(
+            kind: .shape,
+            name: draft.type.displayTitle,
+            transform: CanvasTransform(position: normalizedShape.position),
+            size: normalizedShape.size,
+            zIndex: nextZIndex(),
+            opacity: draft.opacity,
+            shape: normalizedShape.payload
+        )
+        addNode(node)
+    }
+
+    public func addEraserStroke(_ stroke: CanvasEraserStroke) {
+        guard !stroke.points.isEmpty else {
+            return
+        }
+
+        _ = commitMutation { project in
+            project.eraserStrokes.append(stroke)
+            return true
+        }
     }
 
     public func updateSelectedText(_ text: String) {
@@ -196,6 +262,48 @@ public final class CanvasEditorStore {
     public func updateSelectedSource(_ source: CanvasAssetSource) {
         updateSelectedNode { node in
             node.source = source
+        }
+    }
+
+    public func updateSelectedShapeStyle(
+        type: CanvasShapeType,
+        strokeColor: CanvasColor,
+        strokeWidth: Double,
+        opacity: Double
+    ) {
+        guard let selectedNodeID else {
+            return
+        }
+
+        _ = commitMutation { project in
+            guard let index = project.nodes.firstIndex(where: { $0.id == selectedNodeID }),
+                  project.nodes[index].isEditable,
+                  project.nodes[index].kind == .shape,
+                  let currentShape = project.nodes[index].shape else {
+                return false
+            }
+
+            let centeredPoints = currentShape.points.map {
+                CGPoint(
+                    x: CGFloat($0.x - (project.nodes[index].size.width / 2)),
+                    y: CGFloat($0.y - (project.nodes[index].size.height / 2))
+                )
+            }
+
+            guard let normalizedShape = Self.normalizeShapePayload(
+                centeredPoints: centeredPoints,
+                type: type,
+                strokeColor: strokeColor,
+                strokeWidth: strokeWidth
+            ) else {
+                return false
+            }
+
+            project.nodes[index].name = type.displayTitle
+            project.nodes[index].size = normalizedShape.size
+            project.nodes[index].opacity = opacity
+            project.nodes[index].shape = normalizedShape.payload
+            return true
         }
     }
 
@@ -360,8 +468,15 @@ public final class CanvasEditorStore {
     }
 
     private func addNode(_ node: CanvasNode) {
-        commitSelectionMutation(selectedNodeID: node.id) { project in
-            project.nodes.append(node)
+        addNodes([node])
+    }
+
+    private func addNodes(_ nodes: [CanvasNode]) {
+        guard let lastNode = nodes.last else {
+            return
+        }
+        commitSelectionMutation(selectedNodeID: lastNode.id) { project in
+            project.nodes.append(contentsOf: nodes)
             return true
         }
     }
@@ -422,6 +537,16 @@ public final class CanvasEditorStore {
         )
     }
 
+    private func defaultImportedNodePosition(for index: Int) -> CanvasPoint {
+        let base = defaultNodePosition()
+        let offset = Double(index % 6) * 28
+        let rowOffset = Double(index / 6) * 20
+        return CanvasPoint(
+            x: base.x + offset,
+            y: base.y + offset + rowOffset
+        )
+    }
+
     private func fallbackTextStyle(for kind: CanvasNodeKind) -> CanvasTextStyle {
         switch kind {
         case .emoji:
@@ -448,5 +573,141 @@ public final class CanvasEditorStore {
             width: max(intrinsicSize.width * scale, 48),
             height: max(intrinsicSize.height * scale, 48)
         )
+    }
+
+    private func normalizeShapeNode(from draft: CanvasShapeDraft) -> (position: CanvasPoint, size: CanvasSize, payload: CanvasShapePayload)? {
+        let canvasPoints = draft.points.map(\.cgPoint)
+        guard let geometry = Self.normalizeCanvasShapePoints(
+            canvasPoints,
+            type: draft.type,
+            strokeColor: draft.strokeColor,
+            strokeWidth: draft.strokeWidth
+        ) else {
+            return nil
+        }
+
+        return (
+            position: CanvasPoint(x: geometry.bounds.midX, y: geometry.bounds.midY),
+            size: CanvasSize(geometry.bounds.size),
+            payload: geometry.payload
+        )
+    }
+
+    private static func normalizeCanvasShapePoints(
+        _ points: [CGPoint],
+        type: CanvasShapeType,
+        strokeColor: CanvasColor,
+        strokeWidth: Double
+    ) -> (bounds: CGRect, payload: CanvasShapePayload)? {
+        guard let paddedBounds = paddedShapeBounds(for: points, type: type, strokeWidth: strokeWidth) else {
+            return nil
+        }
+
+        let localPoints = points.map { point in
+            CanvasPoint(
+                x: point.x - paddedBounds.minX,
+                y: point.y - paddedBounds.minY
+            )
+        }
+
+        return (
+            bounds: paddedBounds,
+            payload: CanvasShapePayload(
+                type: type,
+                points: localPoints,
+                strokeColor: strokeColor,
+                strokeWidth: strokeWidth
+            )
+        )
+    }
+
+    private static func normalizeShapePayload(
+        centeredPoints: [CGPoint],
+        type: CanvasShapeType,
+        strokeColor: CanvasColor,
+        strokeWidth: Double
+    ) -> (size: CanvasSize, payload: CanvasShapePayload)? {
+        guard !centeredPoints.isEmpty else {
+            return nil
+        }
+
+        let semanticBounds = shapeBounds(for: centeredPoints, type: type)
+        let centerOffset = CGPoint(x: semanticBounds.midX, y: semanticBounds.midY)
+        let recenteredPoints = centeredPoints.map { point in
+            CGPoint(x: point.x - centerOffset.x, y: point.y - centerOffset.y)
+        }
+
+        guard let paddedBounds = paddedShapeBounds(for: recenteredPoints, type: type, strokeWidth: strokeWidth) else {
+            return nil
+        }
+
+        let localPoints = recenteredPoints.map { point in
+            CanvasPoint(
+                x: point.x - paddedBounds.minX,
+                y: point.y - paddedBounds.minY
+            )
+        }
+
+        return (
+            size: CanvasSize(paddedBounds.size),
+            payload: CanvasShapePayload(
+                type: type,
+                points: localPoints,
+                strokeColor: strokeColor,
+                strokeWidth: strokeWidth
+            )
+        )
+    }
+
+    private static func paddedShapeBounds(for points: [CGPoint], type: CanvasShapeType, strokeWidth: Double) -> CGRect? {
+        guard !points.isEmpty else {
+            return nil
+        }
+
+        let semanticBounds = shapeBounds(for: points, type: type)
+        let padding = max(CGFloat(strokeWidth) / 2, 2) + 2
+        let paddedBounds = semanticBounds.insetBy(dx: -padding, dy: -padding)
+        let minimumSize = max(CGFloat(strokeWidth) + 4, 8)
+
+        let width = max(paddedBounds.width, minimumSize)
+        let height = max(paddedBounds.height, minimumSize)
+
+        return CGRect(
+            x: paddedBounds.midX - (width / 2),
+            y: paddedBounds.midY - (height / 2),
+            width: width,
+            height: height
+        )
+    }
+
+    private static func shapeBounds(for points: [CGPoint], type: CanvasShapeType) -> CGRect {
+        switch type {
+        case .brush:
+            return points.reduce(into: CGRect.null) { partialResult, point in
+                partialResult = partialResult.union(CGRect(origin: point, size: .zero))
+            }
+        case .line, .arrow:
+            guard let first = points.first, let last = points.last else {
+                return .null
+            }
+            return CGRect(
+                x: min(first.x, last.x),
+                y: min(first.y, last.y),
+                width: abs(last.x - first.x),
+                height: abs(last.y - first.y)
+            )
+        case .oval, .rectangle:
+            if points.count == 2, let first = points.first, let last = points.last {
+                return CGRect(
+                    x: min(first.x, last.x),
+                    y: min(first.y, last.y),
+                    width: abs(last.x - first.x),
+                    height: abs(last.y - first.y)
+                )
+            }
+            return points.reduce(into: CGRect.null) { partialResult, point in
+                partialResult = partialResult.union(CGRect(origin: point, size: .zero))
+            }
+        }
     }
 }

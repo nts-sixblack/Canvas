@@ -18,6 +18,8 @@ enum CanvasEditorRenderer {
             for node in project.sortedNodes {
                 draw(node: node, assetLoader: assetLoader, in: cgContext)
             }
+
+            CanvasEraserPathBuilder.applyClearStrokes(project.eraserStrokes, in: cgContext)
         }
     }
 
@@ -52,6 +54,8 @@ enum CanvasEditorRenderer {
             drawTextNode(node, in: nodeRect)
         case .sticker, .image:
             drawImageNode(node, assetLoader: assetLoader, in: nodeRect)
+        case .shape:
+            drawShapeNode(node, in: context)
         }
 
         context.restoreGState()
@@ -103,6 +107,23 @@ enum CanvasEditorRenderer {
         }
 
         image.draw(in: aspectFitRect(for: image.size, in: rect))
+    }
+
+    private static func drawShapeNode(_ node: CanvasNode, in context: CGContext) {
+        guard let payload = node.shape else {
+            return
+        }
+
+        let path = payload.bezierPath()
+        context.saveGState()
+        context.translateBy(x: -node.size.width / 2, y: -node.size.height / 2)
+        context.addPath(path.cgPath)
+        context.setStrokeColor(payload.strokeColor.uiColor.cgColor)
+        context.setLineWidth(payload.strokeWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.strokePath()
+        context.restoreGState()
     }
 
     private static func aspectFitRect(for sourceSize: CGSize, in bounds: CGRect) -> CGRect {

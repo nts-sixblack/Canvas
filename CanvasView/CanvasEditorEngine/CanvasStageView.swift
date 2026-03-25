@@ -1,10 +1,53 @@
 import UIKit
 
+struct CanvasBrushConfiguration: Hashable {
+    var type: CanvasShapeType
+    var strokeWidth: Double
+    var opacity: Double
+    var color: CanvasColor
+
+    static let defaultValue = CanvasBrushConfiguration(
+        type: .brush,
+        strokeWidth: 18,
+        opacity: 1,
+        color: .white
+    )
+
+    init(
+        type: CanvasShapeType,
+        strokeWidth: Double,
+        opacity: Double,
+        color: CanvasColor
+    ) {
+        self.type = type
+        self.strokeWidth = strokeWidth
+        self.opacity = opacity
+        self.color = color
+    }
+
+    init(shape: CanvasShapePayload, opacity: Double) {
+        self.init(
+            type: shape.type,
+            strokeWidth: shape.strokeWidth,
+            opacity: opacity,
+            color: shape.strokeColor
+        )
+    }
+}
+
+private enum CanvasStageToolMode: Equatable {
+    case drawing(CanvasBrushConfiguration)
+    case erasing(strokeWidth: Double)
+}
+
 protocol CanvasStageViewDelegate: AnyObject {
     func canvasStageViewDidTapSelectedTextNode(_ stageView: CanvasStageView)
+    func canvasStageViewDidTapSelectedShapeNode(_ stageView: CanvasStageView)
     func canvasStageViewDidBeginInlineEditing(_ stageView: CanvasStageView)
     func canvasStageViewDidEndInlineEditing(_ stageView: CanvasStageView)
     func canvasStageViewDidBeginNodeManipulation(_ stageView: CanvasStageView)
+    func canvasStageView(_ stageView: CanvasStageView, didFinishDrawing draft: CanvasShapeDraft)
+    func canvasStageView(_ stageView: CanvasStageView, didFinishErasing stroke: CanvasEraserStroke)
 }
 
 final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDelegate {
@@ -19,9 +62,13 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     let assetLoader = CanvasAssetLoader()
 
     private let canvasContainerView = UIView()
+    private let contentContainerView = UIView()
     private let backgroundColorView = UIView()
     private let backgroundImageView = UIImageView()
-    private let nodeContainerView = UIView()
+    private let lowerNodeContainerView = UIView()
+    private let selectedNodeHostView = UIView()
+    private let upperNodeContainerView = UIView()
+    private let drawingPreviewView = UIView()
     private let selectionOverlay = CanvasSelectionOverlayView()
     private let inlineTextView = UITextView()
 
@@ -29,6 +76,15 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     private let widthHandle = OverlayHandleControl(systemImage: "arrow.left.and.right")
     private let heightHandle = OverlayHandleControl(systemImage: "arrow.up.and.down")
     private let transformHandle = OverlayHandleControl(systemImage: "arrow.up.left.and.arrow.down.right")
+    private let drawingPreviewLayer = CAShapeLayer()
+    private let eraserMaskLayer = CALayer()
+
+    private lazy var tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+    private lazy var doubleTapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+    private lazy var panGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+    private lazy var pinchGestureRecognizer = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+    private lazy var rotationGestureRecognizer = UIRotationGestureRecognizer(target: self, action: #selector(handleRotation(_:)))
+    private lazy var drawingPanGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleDrawingPan(_:)))
 
     private var projectObserverID: UUID?
     private var selectionObserverID: UUID?
@@ -46,9 +102,16 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     private var editingNodeID: String?
     private var activeEditingStyle: CanvasTextStyle?
     private var isApplyingInlineEditorState = false
+    private var toolMode: CanvasStageToolMode?
+    private var toolPoints: [CGPoint] = []
+    private var toolStartPoint: CGPoint?
 
     private let viewportPadding: CGFloat = 28
     private let textContentInset: CGFloat = 8
+
+    var isToolModeActive: Bool {
+        toolMode != nil
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -59,9 +122,17 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         canvasContainerView.layer.shadowOpacity = 0.3
         canvasContainerView.layer.shadowRadius = 18
         canvasContainerView.layer.shadowOffset = CGSize(width: 0, height: 10)
+        contentContainerView.clipsToBounds = true
 
         backgroundImageView.contentMode = .scaleAspectFill
         backgroundImageView.clipsToBounds = true
+
+        lowerNodeContainerView.clipsToBounds = true
+        selectedNodeHostView.clipsToBounds = false
+        upperNodeContainerView.clipsToBounds = true
+        drawingPreviewView.clipsToBounds = true
+        drawingPreviewView.isUserInteractionEnabled = false
+        drawingPreviewView.isHidden = true
 
         selectionOverlay.isHidden = true
 
@@ -77,10 +148,22 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         inlineTextView.isHidden = true
         inlineTextView.delegate = self
 
+        drawingPreviewLayer.fillColor = UIColor.clear.cgColor
+        drawingPreviewLayer.lineCap = .round
+        drawingPreviewLayer.lineJoin = .round
+        drawingPreviewLayer.isHidden = true
+        drawingPreviewView.layer.addSublayer(drawingPreviewLayer)
+        eraserMaskLayer.contentsGravity = .resize
+        contentContainerView.layer.mask = eraserMaskLayer
+
         addSubview(canvasContainerView)
-        canvasContainerView.addSubview(backgroundColorView)
-        canvasContainerView.addSubview(backgroundImageView)
-        canvasContainerView.addSubview(nodeContainerView)
+        canvasContainerView.addSubview(contentContainerView)
+        contentContainerView.addSubview(backgroundColorView)
+        contentContainerView.addSubview(backgroundImageView)
+        contentContainerView.addSubview(lowerNodeContainerView)
+        contentContainerView.addSubview(selectedNodeHostView)
+        contentContainerView.addSubview(upperNodeContainerView)
+        canvasContainerView.addSubview(drawingPreviewView)
         canvasContainerView.addSubview(selectionOverlay)
         canvasContainerView.addSubview(inlineTextView)
 
@@ -100,19 +183,14 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         widthHandle.addGestureRecognizer(widthPan)
         heightHandle.addGestureRecognizer(heightPan)
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        tap.cancelsTouchesInView = false
+        tapGestureRecognizer.cancelsTouchesInView = false
+        doubleTapGestureRecognizer.numberOfTapsRequired = 2
+        doubleTapGestureRecognizer.cancelsTouchesInView = false
+        tapGestureRecognizer.require(toFail: doubleTapGestureRecognizer)
+        drawingPanGestureRecognizer.maximumNumberOfTouches = 1
+        drawingPanGestureRecognizer.isEnabled = false
 
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        doubleTap.cancelsTouchesInView = false
-        tap.require(toFail: doubleTap)
-
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-        let rotation = UIRotationGestureRecognizer(target: self, action: #selector(handleRotation(_:)))
-
-        [tap, doubleTap, pan, pinch, rotation].forEach {
+        [tapGestureRecognizer, doubleTapGestureRecognizer, panGestureRecognizer, pinchGestureRecognizer, rotationGestureRecognizer, drawingPanGestureRecognizer].forEach {
             $0.delegate = self
             addGestureRecognizer($0)
         }
@@ -145,9 +223,15 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         canvasContainerView.center = CGPoint(x: bounds.midX, y: bounds.midY)
         canvasContainerView.transform = CGAffineTransform(scaleX: canvasScale, y: canvasScale)
 
-        backgroundColorView.frame = CGRect(origin: .zero, size: canvasSize)
-        backgroundImageView.frame = CGRect(origin: .zero, size: canvasSize)
-        nodeContainerView.frame = CGRect(origin: .zero, size: canvasSize)
+        contentContainerView.frame = CGRect(origin: .zero, size: canvasSize)
+        backgroundColorView.frame = contentContainerView.bounds
+        backgroundImageView.frame = contentContainerView.bounds
+        [lowerNodeContainerView, selectedNodeHostView, upperNodeContainerView, drawingPreviewView].forEach {
+            $0.frame = CGRect(origin: .zero, size: canvasSize)
+        }
+        drawingPreviewLayer.frame = drawingPreviewView.bounds
+        eraserMaskLayer.frame = contentContainerView.bounds
+        updateEraserMask()
 
         updateSelectionOverlay()
         updateInlineTextEditor()
@@ -170,11 +254,11 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         project.sortedNodes.forEach { node in
             let nodeView = CanvasNodeView()
             nodeView.apply(node: node, assetLoader: assetLoader)
-            nodeContainerView.addSubview(nodeView)
             nodeViews[node.id] = nodeView
         }
 
-        applyInlineEditingState()
+        syncNodePresentation()
+        canvasContainerView.bringSubviewToFront(drawingPreviewView)
         canvasContainerView.bringSubviewToFront(selectionOverlay)
         canvasContainerView.bringSubviewToFront(inlineTextView)
         [deleteHandle, widthHandle, heightHandle, transformHandle].forEach {
@@ -182,6 +266,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         }
         setNeedsLayout()
         layoutIfNeeded()
+        updateEraserMask(strokes: project.eraserStrokes)
         updateSelectionOverlay()
         updateInlineTextEditor()
     }
@@ -195,12 +280,56 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         editingNodeID = node.id
         activeEditingStyle = node.style
         delegate?.canvasStageViewDidBeginInlineEditing(self)
-        applyInlineEditingState()
+        syncNodePresentation()
         updateInlineTextEditor(forceTextRefresh: true)
 
         let targetOffset = placeCursorAtEnd ? (inlineTextView.text as NSString).length : 0
         inlineTextView.selectedRange = NSRange(location: targetOffset, length: 0)
         inlineTextView.becomeFirstResponder()
+    }
+
+    func beginDrawing(with configuration: CanvasBrushConfiguration) {
+        endInlineEditing()
+        toolMode = .drawing(configuration)
+        toolPoints.removeAll()
+        toolStartPoint = nil
+        drawingPreviewLayer.path = nil
+        drawingPreviewView.isHidden = false
+        drawingPreviewLayer.isHidden = false
+        setNodeGesturesEnabled(false)
+        drawingPanGestureRecognizer.isEnabled = true
+        selectionOverlay.isHidden = true
+        [deleteHandle, widthHandle, heightHandle, transformHandle].forEach { $0.isHidden = true }
+        canvasContainerView.bringSubviewToFront(drawingPreviewView)
+    }
+
+    func beginErasing(strokeWidth: Double) {
+        endInlineEditing()
+        toolMode = .erasing(strokeWidth: strokeWidth)
+        toolPoints.removeAll()
+        toolStartPoint = nil
+        drawingPreviewLayer.path = nil
+        drawingPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.92).cgColor
+        drawingPreviewLayer.lineWidth = strokeWidth
+        drawingPreviewView.isHidden = false
+        drawingPreviewLayer.isHidden = false
+        setNodeGesturesEnabled(false)
+        drawingPanGestureRecognizer.isEnabled = true
+        selectionOverlay.isHidden = true
+        [deleteHandle, widthHandle, heightHandle, transformHandle].forEach { $0.isHidden = true }
+        canvasContainerView.bringSubviewToFront(drawingPreviewView)
+    }
+
+    func cancelDrawingMode() {
+        toolMode = nil
+        toolPoints.removeAll()
+        toolStartPoint = nil
+        drawingPreviewLayer.path = nil
+        drawingPreviewLayer.isHidden = true
+        drawingPreviewView.isHidden = true
+        drawingPanGestureRecognizer.isEnabled = false
+        setNodeGesturesEnabled(true)
+        updateSelectionOverlay()
     }
 
     func endInlineEditing() {
@@ -234,6 +363,10 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === drawingPanGestureRecognizer {
+            return isToolModeActive
+        }
+
         guard let touchedView = touch.view else {
             return true
         }
@@ -266,6 +399,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         let tappedNode = hitTestNode(at: location)
         let tappedSelectedTextNode = tappedNode?.id == store?.selectedNodeID &&
             (tappedNode?.kind == .text || tappedNode?.kind == .emoji)
+        let tappedSelectedShapeNode = tappedNode?.id == store?.selectedNodeID && tappedNode?.kind == .shape
 
         if editingNodeID != nil, tappedNode?.id != editingNodeID {
             endInlineEditing()
@@ -274,6 +408,8 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         store?.selectNode(tappedNode?.id)
         if tappedSelectedTextNode, editingNodeID == nil {
             delegate?.canvasStageViewDidTapSelectedTextNode(self)
+        } else if tappedSelectedShapeNode, editingNodeID == nil {
+            delegate?.canvasStageViewDidTapSelectedShapeNode(self)
         }
     }
 
@@ -508,9 +644,173 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         }
     }
 
+    @objc
+    private func handleDrawingPan(_ gestureRecognizer: UIPanGestureRecognizer) {
+        guard let toolMode else {
+            return
+        }
+
+        let location = clampedCanvasPoint(gestureRecognizer.location(in: canvasContainerView))
+
+        switch gestureRecognizer.state {
+        case .began:
+            toolStartPoint = location
+            toolPoints = [location]
+            updateToolPreview()
+
+        case .changed:
+            guard let toolStartPoint else {
+                return
+            }
+
+            switch toolMode {
+            case .drawing(let configuration):
+                switch configuration.type {
+                case .brush:
+                    appendFreehandPoint(location)
+                case .line, .arrow, .oval, .rectangle:
+                    toolPoints = [toolStartPoint, location]
+                }
+            case .erasing:
+                appendFreehandPoint(location)
+            }
+
+            updateToolPreview()
+
+        case .ended:
+            switch toolMode {
+            case .drawing(let configuration):
+                if let draft = currentShapeDraft(using: configuration) {
+                    delegate?.canvasStageView(self, didFinishDrawing: draft)
+                }
+            case .erasing(let strokeWidth):
+                if let stroke = currentEraserStroke(strokeWidth: strokeWidth) {
+                    delegate?.canvasStageView(self, didFinishErasing: stroke)
+                }
+            }
+            cancelDrawingMode()
+
+        default:
+            cancelDrawingMode()
+        }
+    }
+
     private func handleDeleteTapped() {
         endInlineEditing()
         store?.deleteSelectedNode()
+    }
+
+    private func setNodeGesturesEnabled(_ enabled: Bool) {
+        tapGestureRecognizer.isEnabled = enabled
+        doubleTapGestureRecognizer.isEnabled = enabled
+        panGestureRecognizer.isEnabled = enabled
+        pinchGestureRecognizer.isEnabled = enabled
+        rotationGestureRecognizer.isEnabled = enabled
+    }
+
+    private func clampedCanvasPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, 0), canvasSize.width),
+            y: min(max(point.y, 0), canvasSize.height)
+        )
+    }
+
+    private func appendFreehandPoint(_ point: CGPoint) {
+        if let previousPoint = toolPoints.last {
+            let distance = hypot(point.x - previousPoint.x, point.y - previousPoint.y)
+            if distance >= 1.5 {
+                toolPoints.append(point)
+            } else {
+                toolPoints[toolPoints.count - 1] = point
+            }
+        } else {
+            toolPoints = [point]
+        }
+    }
+
+    private func updateToolPreview() {
+        guard let toolMode else {
+            drawingPreviewLayer.path = nil
+            drawingPreviewLayer.isHidden = true
+            return
+        }
+
+        switch toolMode {
+        case .drawing(let configuration):
+            drawingPreviewLayer.path = CanvasShapePathBuilder.makePath(
+                type: configuration.type,
+                points: toolPoints
+            ).cgPath
+            drawingPreviewLayer.strokeColor = configuration.color.uiColor.withAlphaComponent(configuration.opacity).cgColor
+            drawingPreviewLayer.lineWidth = configuration.strokeWidth
+        case .erasing(let strokeWidth):
+            drawingPreviewLayer.path = CanvasEraserPathBuilder.makePath(points: toolPoints)
+            drawingPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.92).cgColor
+            drawingPreviewLayer.lineWidth = strokeWidth
+        }
+
+        drawingPreviewLayer.isHidden = toolPoints.isEmpty
+    }
+
+    private func currentShapeDraft(using configuration: CanvasBrushConfiguration) -> CanvasShapeDraft? {
+        guard !toolPoints.isEmpty else {
+            return nil
+        }
+
+        let minimumDistance = max(CGFloat(configuration.strokeWidth) * 0.5, 6)
+        let pointDistance: CGFloat
+        if let first = toolPoints.first, let last = toolPoints.last {
+            pointDistance = hypot(last.x - first.x, last.y - first.y)
+        } else {
+            pointDistance = 0
+        }
+
+        if configuration.type != .brush, pointDistance < minimumDistance {
+            return nil
+        }
+
+        return CanvasShapeDraft(
+            type: configuration.type,
+            points: toolPoints.map { point in
+                CanvasPoint(x: point.x, y: point.y)
+            },
+            strokeColor: configuration.color,
+            strokeWidth: configuration.strokeWidth,
+            opacity: configuration.opacity
+        )
+    }
+
+    private func currentEraserStroke(strokeWidth: Double) -> CanvasEraserStroke? {
+        guard !toolPoints.isEmpty else {
+            return nil
+        }
+
+        return CanvasEraserStroke(
+            points: toolPoints.map { CanvasPoint(x: $0.x, y: $0.y) },
+            strokeWidth: strokeWidth
+        )
+    }
+
+    private func updateEraserMask(strokes: [CanvasEraserStroke]? = nil) {
+        let currentStrokes = strokes ?? store?.project.eraserStrokes ?? []
+        guard canvasSize.width > 0, canvasSize.height > 0 else {
+            eraserMaskLayer.contents = nil
+            return
+        }
+
+        let canvasRect = CGRect(origin: .zero, size: canvasSize)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = false
+
+        let maskImage = UIGraphicsImageRenderer(size: canvasSize, format: format).image { rendererContext in
+            UIColor.white.setFill()
+            UIRectFill(canvasRect)
+            CanvasEraserPathBuilder.applyClearStrokes(currentStrokes, in: rendererContext.cgContext)
+        }
+
+        eraserMaskLayer.contentsScale = maskImage.scale
+        eraserMaskLayer.contents = maskImage.cgImage
     }
 
     private func rebindStore(oldValue: CanvasEditorStore?) {
@@ -529,10 +829,50 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
             if let editingNodeID = self.editingNodeID, editingNodeID != selectedNodeID {
                 self.endInlineEditing()
             }
+            self.syncNodePresentation()
             self.updateSelectionOverlay()
-            self.applyInlineEditingState()
             self.updateInlineTextEditor()
         }
+    }
+
+    private func syncNodePresentation() {
+        guard let store else {
+            return
+        }
+
+        let sortedNodes = store.project.sortedNodes
+        let selectedNodeIndex = store.selectedNodeID.flatMap { selectedNodeID in
+            sortedNodes.firstIndex(where: { $0.id == selectedNodeID })
+        }
+
+        if let selectedNodeIndex {
+            for node in sortedNodes[..<selectedNodeIndex] {
+                guard let nodeView = nodeViews[node.id] else {
+                    continue
+                }
+                lowerNodeContainerView.addSubview(nodeView)
+            }
+
+            if let selectedNodeView = nodeViews[sortedNodes[selectedNodeIndex].id] {
+                selectedNodeHostView.addSubview(selectedNodeView)
+            }
+
+            for node in sortedNodes[(selectedNodeIndex + 1)...] {
+                guard let nodeView = nodeViews[node.id] else {
+                    continue
+                }
+                upperNodeContainerView.addSubview(nodeView)
+            }
+        } else {
+            for node in sortedNodes {
+                guard let nodeView = nodeViews[node.id] else {
+                    continue
+                }
+                lowerNodeContainerView.addSubview(nodeView)
+            }
+        }
+
+        updateInlineEditingVisibility()
     }
 
     private func updateSelectionOverlay() {
@@ -551,12 +891,13 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
             width: selectedView.bounds.width + (overlayInset * 2),
             height: selectedView.bounds.height + (overlayInset * 2)
         )
+        let selectedCenter = selectedView.superview?.convert(selectedView.center, to: canvasContainerView) ?? selectedView.center
 
         UIView.performWithoutAnimation {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             selectionOverlay.bounds = CGRect(origin: .zero, size: overlaySize)
-            selectionOverlay.center = selectedView.center
+            selectionOverlay.center = selectedCenter
             selectionOverlay.transform = selectedView.transform
             selectionOverlay.isHidden = false
             selectionOverlay.layer.removeAllAnimations()
@@ -624,7 +965,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         canvasContainerView.bringSubviewToFront(inlineTextView)
     }
 
-    private func applyInlineEditingState() {
+    private func updateInlineEditingVisibility() {
         nodeViews.values.forEach { $0.isHidden = false }
         guard let editingNodeID else {
             inlineTextView.isHidden = true
@@ -640,13 +981,27 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         editingNodeID = nil
         activeEditingStyle = nil
         inlineTextView.isHidden = true
-        applyInlineEditingState()
+        syncNodePresentation()
         delegate?.canvasStageViewDidEndInlineEditing(self)
     }
 
     private func hitTestNode(at point: CGPoint) -> CanvasNode? {
         guard let store else {
             return nil
+        }
+
+        let canvasBounds = CGRect(origin: .zero, size: canvasSize)
+        if !canvasBounds.contains(point) {
+            guard let selectedNodeID = store.selectedNodeID,
+                  let selectedNode = store.selectedNode,
+                  selectedNode.id == selectedNodeID,
+                  let selectedNodeView = nodeViews[selectedNodeID],
+                  !selectedNodeView.isHidden else {
+                return nil
+            }
+
+            let localPoint = selectedNodeView.convert(point, from: canvasContainerView)
+            return selectedNodeView.point(inside: localPoint, with: nil) ? selectedNode : nil
         }
 
         for node in store.project.sortedNodes.reversed() {

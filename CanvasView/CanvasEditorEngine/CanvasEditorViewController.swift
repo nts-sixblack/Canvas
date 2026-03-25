@@ -36,48 +36,72 @@ private enum CanvasEditorOperationError: Error {
     case pngEncodingFailed
 }
 
-final class CanvasEditorViewController: UIViewController, CanvasTextInspectorViewDelegate, PHPickerViewControllerDelegate, CanvasStageViewDelegate, CanvasLayerPanelViewDelegate {
+private enum BrushInspectorMode {
+    case create
+    case edit
+    case erase
+}
+
+private enum VisibleInspectorKind {
+    case none
+    case text
+    case brush
+}
+
+final class CanvasEditorViewController: UIViewController, CanvasTextInspectorViewDelegate, CanvasBrushInspectorViewDelegate, PHPickerViewControllerDelegate, CanvasStageViewDelegate, CanvasLayerPanelViewDelegate {
     weak var delegate: CanvasEditorViewControllerDelegate?
 
     let store: CanvasEditorStore
 
     private let stageView = CanvasStageView()
     private let bottomPanel = UIView()
-    private let toolbarScrollView = UIScrollView()
-    private let toolbarStack = UIStackView()
+    private let historyActionsContainer = UIView()
+    private let historyActionsStack = UIStackView()
+    private let toolbarGridStack = UIStackView()
     private let inspectorContainerView = UIView()
     private let textInspectorView = CanvasTextInspectorView()
+    private let brushInspectorView = CanvasBrushInspectorView()
     private let loadingOverlayView = CanvasLoadingOverlayView()
     private let layerPanelScrimView = UIControl()
     private let layerPanelView = CanvasLayerPanelView()
 
-    private let toolbarHeight: CGFloat = 84
+    private let toolbarTileHeight: CGFloat = 82
+    private let historyButtonSize: CGFloat = 50
     private let inspectorExpandedHeight: CGFloat = 360
-    private let inspectorFloatingOffset: CGFloat = -12
+    private let inspectorVisibleOffset: CGFloat = 0
     private var inspectorBottomConstraint: NSLayoutConstraint?
     private var inspectorHeightConstraint: NSLayoutConstraint?
     private var layerPanelHeightConstraint: NSLayoutConstraint?
     private var isInspectorVisible = false
     private var isInspectorRequested = false
+    private var brushInspectorMode: BrushInspectorMode?
     private var isInlineEditingText = false
     private var isLayerPanelVisible = false
     private var lastSelectedNodeID: String?
     private var loadingState: CanvasEditorLoadingState = .none
+    private var brushConfiguration = CanvasBrushConfiguration.defaultValue {
+        didSet {
+            guard isViewLoaded else {
+                return
+            }
+            updateBrushButtonAppearance()
+        }
+    }
+    private var eraserStrokeWidth: Double = 24
 
     private var projectObserverID: UUID?
     private var selectionObserverID: UUID?
 
-    private lazy var addTextButton = makeToolButton(title: "Text", systemImage: "textformat")
-    private lazy var addEmojiButton = makeToolButton(title: "Emoji", systemImage: "face.smiling")
-    private lazy var addStickerButton = makeToolButton(title: "Sticker", systemImage: "sparkles")
-    private lazy var addPhotoButton = makeToolButton(title: "Photo", systemImage: "photo.on.rectangle")
-    private lazy var addRemoteButton = makeToolButton(title: "URL", systemImage: "link")
-    private lazy var frontButton = makeToolButton(title: "Front", systemImage: "square.3.layers.3d.top.filled")
-    private lazy var backButton = makeToolButton(title: "Back", systemImage: "square.3.layers.3d.bottom.filled")
-    private lazy var duplicateButton = makeToolButton(title: "Duplicate", systemImage: "plus.square.on.square")
-    private lazy var deleteButton = makeToolButton(title: "Delete", systemImage: "trash")
-    private lazy var undoButton = makeToolButton(title: "Undo", systemImage: "arrow.uturn.backward")
-    private lazy var redoButton = makeToolButton(title: "Redo", systemImage: "arrow.uturn.forward")
+    private lazy var addTextButton = makeGridToolButton(title: "Text", systemImage: "textformat")
+    private lazy var addEmojiButton = makeGridToolButton(title: "Emoji", systemImage: "face.smiling")
+    private lazy var addStickerButton = makeGridToolButton(title: "Sticker", systemImage: "sparkles")
+    private lazy var addPhotoButton = makeGridToolButton(title: "Photo", systemImage: "photo.on.rectangle")
+    private lazy var eraserButton = makeGridToolButton(title: "Eraser", systemImage: "eraser")
+    private lazy var addBrushButton = makeGridToolButton(title: "Brush", systemImage: "paintbrush")
+    private lazy var duplicateButton = makeGridToolButton(title: "Duplicate", systemImage: "plus.square.on.square")
+    private lazy var deleteButton = makeGridToolButton(title: "Delete", systemImage: "trash")
+    private lazy var undoButton = makeHistoryButton(title: "Undo", systemImage: "arrow.uturn.backward")
+    private lazy var redoButton = makeHistoryButton(title: "Redo", systemImage: "arrow.uturn.forward")
     private lazy var exportBarButtonItem = UIBarButtonItem(
         title: "Export",
         style: .prominent,
@@ -135,6 +159,8 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         stageView.delegate = self
         textInspectorView.delegate = self
         textInspectorView.configure(fontFamilies: store.configuration.fontCatalog, palette: store.configuration.colorPalette)
+        brushInspectorView.delegate = self
+        brushInspectorView.configure(palette: store.configuration.colorPalette)
         layerPanelView.delegate = self
 
         NotificationCenter.default.addObserver(
@@ -147,11 +173,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         setupLayout()
         setupToolbar()
         bindStore()
+        updateBrushButtonAppearance()
         updateInspectorMetrics()
     }
 
     private func setupLayout() {
-        [stageView, bottomPanel, inspectorContainerView, layerPanelScrimView, layerPanelView, loadingOverlayView].forEach {
+        [stageView, bottomPanel, historyActionsContainer, inspectorContainerView, layerPanelScrimView, layerPanelView, loadingOverlayView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -159,6 +186,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         bottomPanel.backgroundColor = UIColor(red: 0.1, green: 0.11, blue: 0.15, alpha: 0.98)
         bottomPanel.layer.cornerRadius = 30
         bottomPanel.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        bottomPanel.layer.cornerCurve = .continuous
+
+        historyActionsStack.translatesAutoresizingMaskIntoConstraints = false
+        historyActionsStack.axis = .horizontal
+        historyActionsStack.spacing = 14
+        historyActionsContainer.addSubview(historyActionsStack)
 
         inspectorContainerView.backgroundColor = .clear
         inspectorContainerView.alpha = 0
@@ -173,20 +206,20 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         layerPanelView.transform = layerPanelHiddenTransform
         layerPanelView.isUserInteractionEnabled = false
 
-        toolbarScrollView.translatesAutoresizingMaskIntoConstraints = false
-        toolbarScrollView.showsHorizontalScrollIndicator = false
-        bottomPanel.addSubview(toolbarScrollView)
-
-        toolbarStack.translatesAutoresizingMaskIntoConstraints = false
-        toolbarStack.axis = .horizontal
-        toolbarStack.spacing = 10
-        toolbarScrollView.addSubview(toolbarStack)
+        toolbarGridStack.translatesAutoresizingMaskIntoConstraints = false
+        toolbarGridStack.axis = .vertical
+        toolbarGridStack.spacing = 10
+        toolbarGridStack.distribution = .fillEqually
+        bottomPanel.addSubview(toolbarGridStack)
 
         textInspectorView.translatesAutoresizingMaskIntoConstraints = false
+        brushInspectorView.translatesAutoresizingMaskIntoConstraints = false
+        brushInspectorView.isHidden = true
         inspectorContainerView.addSubview(textInspectorView)
+        inspectorContainerView.addSubview(brushInspectorView)
 
         inspectorBottomConstraint = inspectorContainerView.bottomAnchor.constraint(
-            equalTo: bottomPanel.topAnchor,
+            equalTo: view.bottomAnchor,
             constant: inspectorExpandedHeight + 40
         )
         inspectorHeightConstraint = inspectorContainerView.heightAnchor.constraint(equalToConstant: inspectorExpandedHeight + view.safeAreaInsets.bottom)
@@ -210,17 +243,18 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             bottomPanel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomPanel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            toolbarScrollView.leadingAnchor.constraint(equalTo: bottomPanel.leadingAnchor, constant: 16),
-            toolbarScrollView.trailingAnchor.constraint(equalTo: bottomPanel.trailingAnchor, constant: -16),
-            toolbarScrollView.topAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: 12),
-            toolbarScrollView.heightAnchor.constraint(equalToConstant: toolbarHeight),
-            toolbarScrollView.bottomAnchor.constraint(equalTo: bottomPanel.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            historyActionsContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            historyActionsContainer.bottomAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: -18),
 
-            toolbarStack.leadingAnchor.constraint(equalTo: toolbarScrollView.contentLayoutGuide.leadingAnchor),
-            toolbarStack.trailingAnchor.constraint(equalTo: toolbarScrollView.contentLayoutGuide.trailingAnchor),
-            toolbarStack.topAnchor.constraint(equalTo: toolbarScrollView.contentLayoutGuide.topAnchor),
-            toolbarStack.bottomAnchor.constraint(equalTo: toolbarScrollView.contentLayoutGuide.bottomAnchor),
-            toolbarStack.heightAnchor.constraint(equalTo: toolbarScrollView.frameLayoutGuide.heightAnchor),
+            historyActionsStack.leadingAnchor.constraint(equalTo: historyActionsContainer.leadingAnchor),
+            historyActionsStack.trailingAnchor.constraint(equalTo: historyActionsContainer.trailingAnchor),
+            historyActionsStack.topAnchor.constraint(equalTo: historyActionsContainer.topAnchor),
+            historyActionsStack.bottomAnchor.constraint(equalTo: historyActionsContainer.bottomAnchor),
+
+            toolbarGridStack.leadingAnchor.constraint(equalTo: bottomPanel.leadingAnchor, constant: 18),
+            toolbarGridStack.trailingAnchor.constraint(equalTo: bottomPanel.trailingAnchor, constant: -18),
+            toolbarGridStack.topAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: 20),
+            toolbarGridStack.bottomAnchor.constraint(equalTo: bottomPanel.safeAreaLayoutGuide.bottomAnchor, constant: -12),
 
             inspectorContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inspectorContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -229,6 +263,11 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             textInspectorView.trailingAnchor.constraint(equalTo: inspectorContainerView.trailingAnchor),
             textInspectorView.topAnchor.constraint(equalTo: inspectorContainerView.topAnchor),
             textInspectorView.bottomAnchor.constraint(equalTo: inspectorContainerView.bottomAnchor),
+
+            brushInspectorView.leadingAnchor.constraint(equalTo: inspectorContainerView.leadingAnchor),
+            brushInspectorView.trailingAnchor.constraint(equalTo: inspectorContainerView.trailingAnchor),
+            brushInspectorView.topAnchor.constraint(equalTo: inspectorContainerView.topAnchor),
+            brushInspectorView.bottomAnchor.constraint(equalTo: inspectorContainerView.bottomAnchor),
 
             layerPanelScrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             layerPanelScrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -247,24 +286,43 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     private func setupToolbar() {
-        let toolbarItems: [(UIButton, Selector)] = [
+        let gridButtons: [(UIButton, Selector)] = [
             (addTextButton, #selector(addTextTapped)),
             (addEmojiButton, #selector(addEmojiTapped)),
             (addStickerButton, #selector(addStickerTapped)),
             (addPhotoButton, #selector(addPhotoTapped)),
-            (addRemoteButton, #selector(addRemoteTapped)),
-            (frontButton, #selector(frontTapped)),
-            (backButton, #selector(backTapped)),
+            (eraserButton, #selector(eraserTapped)),
+            (addBrushButton, #selector(addBrushTapped)),
             (duplicateButton, #selector(duplicateTapped)),
-            (deleteButton, #selector(deleteTapped)),
+            (deleteButton, #selector(deleteTapped))
+        ]
+
+        gridButtons.forEach { button, action in
+            button.addTarget(self, action: action, for: .touchUpInside)
+        }
+
+        let historyButtons: [(UIButton, Selector)] = [
             (undoButton, #selector(undoTapped)),
             (redoButton, #selector(redoTapped))
         ]
 
-        toolbarItems.forEach { button, action in
+        historyButtons.forEach { button, action in
             button.addTarget(self, action: action, for: .touchUpInside)
-            toolbarStack.addArrangedSubview(button)
+            historyActionsStack.addArrangedSubview(button)
         }
+
+        toolbarGridStack.addArrangedSubview(makeToolbarRow([
+            addTextButton,
+            addEmojiButton,
+            addStickerButton,
+            addPhotoButton
+        ]))
+        toolbarGridStack.addArrangedSubview(makeToolbarRow([
+            eraserButton,
+            duplicateButton,
+            deleteButton,
+            addBrushButton
+        ]))
     }
 
     private func bindStore() {
@@ -275,6 +333,9 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             guard let self else { return }
             if selectedNodeID != self.lastSelectedNodeID {
                 self.isInspectorRequested = false
+                if self.brushInspectorMode == .edit {
+                    self.brushInspectorMode = nil
+                }
             }
             if selectedNodeID == nil {
                 self.isInlineEditingText = false
@@ -289,22 +350,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         updateLayerPanelHeight()
 
         let hasSelection = store.selectedNode != nil
-        frontButton.isEnabled = hasSelection
-        backButton.isEnabled = hasSelection
         duplicateButton.isEnabled = hasSelection
         deleteButton.isEnabled = hasSelection
         undoButton.isEnabled = store.canUndo
         redoButton.isEnabled = store.canRedo
         updateLayerButtonAppearance()
-
-        if let node = store.selectedNode, node.kind == .text || node.kind == .emoji {
-            textInspectorView.apply(node: node)
-            let shouldShowInspector = isInspectorRequested && !isInlineEditingText
-            setInspectorVisible(shouldShowInspector, animated: true)
-        } else {
-            isInspectorRequested = false
-            setInspectorVisible(false, animated: true)
-        }
+        updateVisibleInspector(animated: true)
     }
 
     private func setInspectorVisible(_ visible: Bool, animated: Bool) {
@@ -335,7 +386,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private func updateInspectorMetrics() {
         let totalHeight = inspectorExpandedHeight + view.safeAreaInsets.bottom
         inspectorHeightConstraint?.constant = totalHeight
-        inspectorBottomConstraint?.constant = isInspectorVisible ? inspectorFloatingOffset : totalHeight + 20
+        inspectorBottomConstraint?.constant = isInspectorVisible ? inspectorVisibleOffset : totalHeight + 20
     }
 
     private func setLoadingState(_ state: CanvasEditorLoadingState, animated: Bool = true) {
@@ -343,6 +394,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         let isBusy = state != .none
         stageView.isUserInteractionEnabled = !isBusy
         bottomPanel.isUserInteractionEnabled = !isBusy
+        historyActionsContainer.isUserInteractionEnabled = !isBusy
         inspectorContainerView.isUserInteractionEnabled = !isBusy
         navigationItem.leftBarButtonItem?.isEnabled = !isBusy
         exportBarButtonItem.isEnabled = !isBusy
@@ -351,6 +403,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
         if isBusy {
             setLayerPanelVisible(false, animated: animated)
+            stageView.cancelDrawingMode()
         }
 
         if isBusy {
@@ -375,12 +428,51 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             return
         }
         isInspectorRequested = false
-        setInspectorVisible(false, animated: true)
+        brushInspectorMode = nil
+        updateVisibleInspector(animated: true)
     }
 
     private func updateLayerPanelHeight() {
         let maximumHeight = min(max(view.bounds.height - view.safeAreaInsets.top - 44, 220), 420)
         layerPanelHeightConstraint?.constant = layerPanelView.preferredHeight(maximumHeight: maximumHeight)
+    }
+
+    private func resolvedVisibleInspectorKind() -> VisibleInspectorKind {
+        guard !isInlineEditingText else {
+            return .none
+        }
+
+        if let brushInspectorMode {
+            switch brushInspectorMode {
+            case .create:
+                return .brush
+            case .edit:
+                guard let node = store.selectedNode,
+                      node.kind == .shape,
+                      node.shape != nil else {
+                    self.brushInspectorMode = nil
+                    return .none
+                }
+                return .brush
+            case .erase:
+                return .brush
+            }
+        }
+
+        guard let node = store.selectedNode, node.kind == .text || node.kind == .emoji else {
+            isInspectorRequested = false
+            return .none
+        }
+
+        textInspectorView.apply(node: node)
+        return isInspectorRequested ? .text : .none
+    }
+
+    private func updateVisibleInspector(animated: Bool) {
+        let visibleInspectorKind = resolvedVisibleInspectorKind()
+        textInspectorView.isHidden = visibleInspectorKind != .text
+        brushInspectorView.isHidden = visibleInspectorKind != .brush
+        setInspectorVisible(visibleInspectorKind != .none, animated: animated)
     }
 
     private func updateLayerButtonAppearance() {
@@ -433,18 +525,85 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         CGAffineTransform(translationX: 26, y: -8)
     }
 
-    private func makeToolButton(title: String, systemImage: String) -> UIButton {
+    private func makeToolbarRow(_ arrangedSubviews: [UIView]) -> UIStackView {
+        let rowStack = UIStackView(arrangedSubviews: arrangedSubviews)
+        rowStack.axis = .horizontal
+        rowStack.spacing = 10
+        rowStack.alignment = .fill
+        rowStack.distribution = .fillEqually
+        return rowStack
+    }
+
+    private func makeToolbarSpacerView() -> UIView {
+        let spacerView = UIView()
+        spacerView.isUserInteractionEnabled = false
+        return spacerView
+    }
+
+    private func makeGridToolButton(title: String, systemImage: String) -> UIButton {
         let button = UIButton(type: .system)
-        button.configuration = .tinted()
-        button.configuration?.title = title
-        button.configuration?.image = UIImage(systemName: systemImage)
-        button.configuration?.imagePlacement = .top
-        button.configuration?.imagePadding = 8
-        button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
-        button.configuration?.baseForegroundColor = .white
-        button.configuration?.baseBackgroundColor = UIColor.white.withAlphaComponent(0.08)
+        var configuration = UIButton.Configuration.filled()
+        var titleAttributes = AttributeContainer()
+        titleAttributes.font = UIFont.systemFont(ofSize: 15, weight: .medium)
+        configuration.attributedTitle = AttributedString(title, attributes: titleAttributes)
+        configuration.image = UIImage(systemName: systemImage)
+        configuration.imagePlacement = .top
+        configuration.imagePadding = 10
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 8, bottom: 14, trailing: 8)
+        configuration.baseForegroundColor = .white
+        configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.08)
+        configuration.cornerStyle = .large
+        button.configuration = configuration
         button.layer.cornerRadius = 22
+        button.layer.cornerCurve = .continuous
+        button.heightAnchor.constraint(equalToConstant: toolbarTileHeight).isActive = true
         return button
+    }
+
+    private func updateBrushButtonAppearance() {
+        guard var configuration = addBrushButton.configuration else {
+            return
+        }
+
+        configuration.image = UIImage(systemName: brushConfiguration.type.systemImageName)
+        addBrushButton.configuration = configuration
+    }
+
+    private func makeHistoryButton(title: String, systemImage: String) -> UIButton {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.filled()
+        configuration.image = UIImage(systemName: systemImage)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+        configuration.baseForegroundColor = .white
+        configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.12)
+        configuration.cornerStyle = .capsule
+        button.configuration = configuration
+        button.accessibilityLabel = title
+        button.widthAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
+        button.heightAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
+        return button
+    }
+
+    private func dismissInspector(animated: Bool) {
+        isInspectorRequested = false
+        brushInspectorMode = nil
+        updateVisibleInspector(animated: animated)
+    }
+
+    private func dismissEditingOverlays(animated: Bool) {
+        dismissInspector(animated: animated)
+        stageView.cancelDrawingMode()
+    }
+
+    private func presentBrushInspector(mode: BrushInspectorMode, configuration: CanvasBrushConfiguration) {
+        isInspectorRequested = false
+        brushInspectorMode = mode
+        brushConfiguration = configuration
+        let inspectorMode: CanvasBrushInspectorMode = mode == .erase ? .eraser : .brush
+        brushInspectorView.apply(configuration: configuration, mode: inspectorMode)
+        updateVisibleInspector(animated: true)
     }
 
     private func applyTextStyleMutation(_ mutation: (inout CanvasTextStyle) -> Void) {
@@ -452,52 +611,51 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         stageView.ensureSelectedTextFitsHeight()
     }
 
-    private func presentRemoteImagePrompt() {
-        let alert = UIAlertController(title: "Insert Remote Image", message: "Paste an image URL.", preferredStyle: .alert)
-        alert.addTextField {
-            $0.placeholder = "https://example.com/image.png"
-            $0.keyboardType = .URL
-            $0.autocapitalizationType = .none
-            $0.autocorrectionType = .no
-        }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Insert", style: .default) { [weak self, weak alert] _ in
-            guard let self else { return }
-            guard let url = alert?.textFields?.first?.text, !url.isEmpty else {
-                return
-            }
-            self.importRemoteImage(from: url)
-        })
-        present(alert, animated: true)
-    }
-
     private func presentEmojiPrompt() {
-        let alert = UIAlertController(title: "Add Emoji", message: "Insert one emoji or a short sequence.", preferredStyle: .alert)
-        alert.addTextField {
-            $0.text = "✨"
-        }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Add", style: .default) { [weak self, weak alert] _ in
+        let picker = CanvasInsertPickerSheetViewController(
+            mode: .emoji,
+            items: CanvasInsertPickerCatalog.emojiItems,
+            assetLoader: stageView.assetLoader
+        ) { [weak self] items in
             guard let self else { return }
-            let emoji = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines)
-            self.store.addEmojiNode(text: emoji?.isEmpty == false ? emoji! : "✨")
-        })
-        present(alert, animated: true)
+            let selectedEmoji = items.compactMap { item -> String? in
+                guard case .emoji(let emoji) = item.preview else {
+                    return nil
+                }
+                return emoji
+            }
+            self.store.addEmojiNodes(texts: selectedEmoji)
+        }
+        presentInsertPicker(picker)
     }
 
     private func presentStickerPicker() {
-        let alert = UIAlertController(title: "Pick Sticker", message: nil, preferredStyle: .actionSheet)
-        store.configuration.stickerCatalog.forEach { sticker in
-            alert.addAction(UIAlertAction(title: sticker.name, style: .default) { [weak self] _ in
-                self?.store.addStickerNode(source: sticker.source)
-            })
+        let picker = CanvasInsertPickerSheetViewController(
+            mode: .sticker,
+            items: CanvasInsertPickerCatalog.stickerItems(from: store.configuration.stickerCatalog),
+            assetLoader: stageView.assetLoader
+        ) { [weak self] items in
+            guard let self else { return }
+            let selectedSources = items.compactMap { item -> CanvasAssetSource? in
+                guard case .asset(let source) = item.preview else {
+                    return nil
+                }
+                return source
+            }
+            self.store.addStickerNodes(sources: selectedSources)
         }
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = addStickerButton
-            popover.sourceRect = addStickerButton.bounds
+        presentInsertPicker(picker)
+    }
+
+    private func presentInsertPicker(_ picker: UIViewController) {
+        picker.modalPresentationStyle = .pageSheet
+        if let sheet = picker.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = false
+            sheet.preferredCornerRadius = 28
+            sheet.prefersScrollingExpandsWhenScrolledToEdge = false
         }
-        present(alert, animated: true)
+        present(picker, animated: true)
     }
 
     private func presentErrorAlert(message: String) {
@@ -518,36 +676,86 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         store.moveNodeInLayerPanel(from: sourceIndex, to: destinationIndex)
     }
 
-    private func importRemoteImage(from url: String) {
-        setLoadingState(.importingImage)
-        let source = CanvasAssetSource.remoteURL(url)
-        stageView.assetLoader.image(for: source) { [weak self] image in
-            guard let self else { return }
-            self.setLoadingState(.none)
-            guard let image else {
-                self.presentErrorAlert(message: "Unable to load image from URL.")
-                return
-            }
-            self.store.addImageNode(source: source, intrinsicSize: CanvasSize(image.size))
+    func textInspectorViewDidRequestTextEdit(_ textInspectorView: CanvasTextInspectorView) {
+        stageView.beginInlineEditingForSelectedNode()
+    }
+
+    func canvasBrushInspectorViewDidCancel(_ brushInspectorView: CanvasBrushInspectorView) {
+        dismissInspector(animated: true)
+    }
+
+    func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didChange configuration: CanvasBrushConfiguration) {
+        switch brushInspectorMode {
+        case .erase:
+            eraserStrokeWidth = configuration.strokeWidth
+        default:
+            brushConfiguration = configuration
         }
     }
 
-    func textInspectorViewDidRequestTextEdit(_ textInspectorView: CanvasTextInspectorView) {
-        stageView.beginInlineEditingForSelectedNode()
+    func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didConfirm configuration: CanvasBrushConfiguration) {
+        switch brushInspectorMode {
+        case .create:
+            brushConfiguration = configuration
+            dismissInspector(animated: true)
+            store.selectNode(nil)
+            stageView.beginDrawing(with: configuration)
+
+        case .edit:
+            brushConfiguration = configuration
+            store.updateSelectedShapeStyle(
+                type: configuration.type,
+                strokeColor: configuration.color,
+                strokeWidth: configuration.strokeWidth,
+                opacity: configuration.opacity
+            )
+            dismissInspector(animated: true)
+
+        case .erase:
+            eraserStrokeWidth = configuration.strokeWidth
+            dismissInspector(animated: true)
+            store.selectNode(nil)
+            stageView.beginErasing(strokeWidth: configuration.strokeWidth)
+
+        case .none:
+            dismissInspector(animated: true)
+        }
     }
 
     func canvasStageViewDidTapSelectedTextNode(_ stageView: CanvasStageView) {
         guard let node = store.selectedNode, node.kind == .text || node.kind == .emoji, !isInlineEditingText else {
             return
         }
+        stageView.cancelDrawingMode()
+        brushInspectorMode = nil
         isInspectorRequested.toggle()
         refreshChrome()
+    }
+
+    func canvasStageViewDidTapSelectedShapeNode(_ stageView: CanvasStageView) {
+        guard let node = store.selectedNode,
+              node.kind == .shape,
+              let shape = node.shape,
+              !isInlineEditingText else {
+            return
+        }
+
+        if brushInspectorMode == .edit, !brushInspectorView.isHidden {
+            dismissInspector(animated: true)
+            return
+        }
+
+        presentBrushInspector(
+            mode: .edit,
+            configuration: CanvasBrushConfiguration(shape: shape, opacity: node.opacity)
+        )
     }
 
     func canvasStageViewDidBeginInlineEditing(_ stageView: CanvasStageView) {
         isInlineEditingText = true
         isInspectorRequested = false
-        setInspectorVisible(false, animated: true)
+        brushInspectorMode = nil
+        updateVisibleInspector(animated: true)
     }
 
     func canvasStageViewDidEndInlineEditing(_ stageView: CanvasStageView) {
@@ -556,11 +764,27 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     func canvasStageViewDidBeginNodeManipulation(_ stageView: CanvasStageView) {
-        guard isInspectorRequested || isInspectorVisible else {
+        guard isInspectorRequested || brushInspectorMode != nil || isInspectorVisible else {
             return
         }
         isInspectorRequested = false
-        setInspectorVisible(false, animated: true)
+        brushInspectorMode = nil
+        updateVisibleInspector(animated: true)
+    }
+
+    func canvasStageView(_ stageView: CanvasStageView, didFinishDrawing draft: CanvasShapeDraft) {
+        brushConfiguration = CanvasBrushConfiguration(
+            type: draft.type,
+            strokeWidth: draft.strokeWidth,
+            opacity: draft.opacity,
+            color: draft.strokeColor
+        )
+        store.addShapeNode(from: draft)
+    }
+
+    func canvasStageView(_ stageView: CanvasStageView, didFinishErasing stroke: CanvasEraserStroke) {
+        eraserStrokeWidth = stroke.strokeWidth
+        store.addEraserStroke(stroke)
     }
 
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectFontFamily fontFamily: String) {
@@ -657,6 +881,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     @objc
     private func layersTapped() {
+        dismissEditingOverlays(animated: true)
         setLayerPanelVisible(!isLayerPanelVisible, animated: true)
     }
 
@@ -710,22 +935,26 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     @objc
     private func addTextTapped() {
+        dismissEditingOverlays(animated: true)
         store.addTextNode()
         stageView.beginInlineEditingForSelectedNode(placeCursorAtEnd: false)
     }
 
     @objc
     private func addEmojiTapped() {
+        dismissEditingOverlays(animated: true)
         presentEmojiPrompt()
     }
 
     @objc
     private func addStickerTapped() {
+        dismissEditingOverlays(animated: true)
         presentStickerPicker()
     }
 
     @objc
     private func addPhotoTapped() {
+        dismissEditingOverlays(animated: true)
         var configuration = PHPickerConfiguration()
         configuration.filter = .images
         configuration.selectionLimit = 1
@@ -735,37 +964,44 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     @objc
-    private func addRemoteTapped() {
-        presentRemoteImagePrompt()
+    private func eraserTapped() {
+        stageView.cancelDrawingMode()
+        let configuration = CanvasBrushConfiguration(
+            type: .brush,
+            strokeWidth: eraserStrokeWidth,
+            opacity: 1,
+            color: .white
+        )
+        presentBrushInspector(mode: .erase, configuration: configuration)
     }
 
     @objc
-    private func frontTapped() {
-        store.bringSelectedNodeToFront()
-    }
-
-    @objc
-    private func backTapped() {
-        store.sendSelectedNodeToBack()
+    private func addBrushTapped() {
+        stageView.cancelDrawingMode()
+        presentBrushInspector(mode: .create, configuration: brushConfiguration)
     }
 
     @objc
     private func duplicateTapped() {
+        dismissEditingOverlays(animated: true)
         store.duplicateSelectedNode()
     }
 
     @objc
     private func deleteTapped() {
+        dismissEditingOverlays(animated: true)
         store.deleteSelectedNode()
     }
 
     @objc
     private func undoTapped() {
+        stageView.cancelDrawingMode()
         store.undo()
     }
 
     @objc
     private func redoTapped() {
+        stageView.cancelDrawingMode()
         store.redo()
     }
 }
@@ -918,6 +1154,7 @@ final class CanvasLayerPanelView: UIView, UITableViewDataSource, UITableViewDele
 
 final class CanvasLayerPanelCell: UITableViewCell {
     static let reuseIdentifier = "CanvasLayerPanelCell"
+    private static let previewAssetLoader = CanvasAssetLoader()
 
     var onToggleLock: (() -> Void)?
 
@@ -1033,13 +1270,19 @@ final class CanvasLayerPanelCell: UITableViewCell {
         case .sticker:
             previewImageView.isHidden = false
             previewLabel.isHidden = true
-            previewImageView.image = UIImage(systemName: node.source?.name ?? "sparkles")
-            previewImageView.tintColor = node.style?.foregroundColor.uiColor ?? .white
+            let stickerImage = Self.previewAssetLoader.imageSynchronously(for: node.source)
+            previewImageView.image = stickerImage ?? UIImage(systemName: node.source?.name ?? "sparkles")
+            previewImageView.tintColor = stickerImage == nil ? (node.style?.foregroundColor.uiColor ?? .white) : nil
         case .image:
             previewImageView.isHidden = false
             previewLabel.isHidden = true
             previewImageView.image = UIImage(systemName: "photo")
             previewImageView.tintColor = .white
+        case .shape:
+            previewImageView.isHidden = false
+            previewLabel.isHidden = true
+            previewImageView.image = UIImage(systemName: node.shape?.type.systemImageName ?? "paintbrush")
+            previewImageView.tintColor = node.shape?.strokeColor.uiColor ?? .white
         }
     }
 
@@ -1061,6 +1304,8 @@ final class CanvasLayerPanelCell: UITableViewCell {
             return "Sticker"
         case .image:
             return "Image"
+        case .shape:
+            return node.shape?.type.displayTitle ?? "Shape"
         }
     }
 
@@ -1074,6 +1319,8 @@ final class CanvasLayerPanelCell: UITableViewCell {
             return UIColor(red: 0.49, green: 0.79, blue: 1, alpha: 0.28)
         case .image:
             return UIColor.white.withAlphaComponent(0.18)
+        case .shape:
+            return UIColor(red: 0.46, green: 0.86, blue: 0.62, alpha: 0.22)
         }
     }
 }

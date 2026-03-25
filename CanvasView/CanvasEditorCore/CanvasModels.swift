@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 public enum CanvasSchemaVersion {
-    public static let current = 1
+    public static let current = 3
 }
 
 public struct CanvasSize: Codable, Hashable, Sendable {
@@ -58,6 +58,138 @@ public enum CanvasNodeKind: String, Codable, CaseIterable, Sendable {
     case emoji
     case sticker
     case image
+    case shape
+}
+
+public enum CanvasShapeType: String, Codable, CaseIterable, Sendable {
+    case brush
+    case line
+    case arrow
+    case oval
+    case rectangle
+}
+
+public extension CanvasShapeType {
+    var displayTitle: String {
+        switch self {
+        case .brush:
+            return "Brush"
+        case .line:
+            return "Line"
+        case .arrow:
+            return "Arrow"
+        case .oval:
+            return "Oval"
+        case .rectangle:
+            return "Rectangle"
+        }
+    }
+}
+
+public struct CanvasShapePayload: Codable, Hashable, Sendable {
+    public var type: CanvasShapeType
+    public var points: [CanvasPoint]
+    public var strokeColor: CanvasColor
+    public var strokeWidth: Double
+
+    public init(
+        type: CanvasShapeType,
+        points: [CanvasPoint],
+        strokeColor: CanvasColor,
+        strokeWidth: Double
+    ) {
+        self.type = type
+        self.points = points
+        self.strokeColor = strokeColor
+        self.strokeWidth = strokeWidth
+    }
+}
+
+public struct CanvasShapeDraft: Hashable, Sendable {
+    public var type: CanvasShapeType
+    public var points: [CanvasPoint]
+    public var strokeColor: CanvasColor
+    public var strokeWidth: Double
+    public var opacity: Double
+
+    public init(
+        type: CanvasShapeType,
+        points: [CanvasPoint],
+        strokeColor: CanvasColor,
+        strokeWidth: Double,
+        opacity: Double = 1
+    ) {
+        self.type = type
+        self.points = points
+        self.strokeColor = strokeColor
+        self.strokeWidth = strokeWidth
+        self.opacity = opacity
+    }
+}
+
+public struct CanvasEraserStroke: Codable, Hashable, Sendable {
+    public var points: [CanvasPoint]
+    public var strokeWidth: Double
+
+    public init(points: [CanvasPoint], strokeWidth: Double) {
+        self.points = points
+        self.strokeWidth = strokeWidth
+    }
+}
+
+public enum CanvasEraserPathBuilder {
+    public static func makePath(points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = points.first else {
+            return path
+        }
+
+        path.move(to: first)
+        if points.count == 1 {
+            path.addLine(to: first)
+        } else {
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+        }
+        return path
+    }
+
+    public static func makePath(for stroke: CanvasEraserStroke) -> CGPath {
+        makePath(points: stroke.points.map(\.cgPoint))
+    }
+
+    public static func makeMaskPath(in rect: CGRect, strokes: [CanvasEraserStroke]) -> CGPath {
+        let maskPath = CGMutablePath()
+        maskPath.addRect(rect)
+
+        for stroke in strokes where !stroke.points.isEmpty {
+            let strokedPath = makePath(for: stroke).copy(
+                strokingWithWidth: CGFloat(stroke.strokeWidth),
+                lineCap: .round,
+                lineJoin: .round,
+                miterLimit: 10
+            )
+            maskPath.addPath(strokedPath)
+        }
+
+        return maskPath
+    }
+
+    public static func applyClearStrokes(_ strokes: [CanvasEraserStroke], in context: CGContext) {
+        context.saveGState()
+        context.setBlendMode(.clear)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        for stroke in strokes where !stroke.points.isEmpty {
+            context.addPath(makePath(for: stroke))
+            context.setLineWidth(CGFloat(stroke.strokeWidth))
+            context.strokePath()
+        }
+
+        context.restoreGState()
+    }
 }
 
 public enum CanvasAssetKind: String, Codable, Sendable {
@@ -255,6 +387,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
     public var source: CanvasAssetSource?
     public var text: String?
     public var style: CanvasTextStyle?
+    public var shape: CanvasShapePayload?
     public var isEditable: Bool
 
     private enum CodingKeys: String, CodingKey {
@@ -268,6 +401,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         case source
         case text
         case style
+        case shape
         case isEditable
     }
 
@@ -282,6 +416,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         source: CanvasAssetSource? = nil,
         text: String? = nil,
         style: CanvasTextStyle? = nil,
+        shape: CanvasShapePayload? = nil,
         isEditable: Bool = true
     ) {
         self.id = id
@@ -294,6 +429,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         self.source = source
         self.text = text
         self.style = style
+        self.shape = shape
         self.isEditable = isEditable
     }
 
@@ -309,6 +445,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         source = try container.decodeIfPresent(CanvasAssetSource.self, forKey: .source)
         text = try container.decodeIfPresent(String.self, forKey: .text)
         style = try container.decodeIfPresent(CanvasTextStyle.self, forKey: .style)
+        shape = try container.decodeIfPresent(CanvasShapePayload.self, forKey: .shape)
         isEditable = try container.decodeIfPresent(Bool.self, forKey: .isEditable) ?? true
     }
 
@@ -324,6 +461,7 @@ public struct CanvasNode: Codable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(text, forKey: .text)
         try container.encodeIfPresent(style, forKey: .style)
+        try container.encodeIfPresent(shape, forKey: .shape)
         try container.encode(isEditable, forKey: .isEditable)
     }
 }
@@ -369,7 +507,18 @@ public struct CanvasProject: Codable, Hashable, Sendable {
     public var canvasSize: CanvasSize
     public var background: CanvasBackground
     public var nodes: [CanvasNode]
+    public var eraserStrokes: [CanvasEraserStroke]
     public var metadata: CanvasProjectMetadata
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case templateID
+        case canvasSize
+        case background
+        case nodes
+        case eraserStrokes
+        case metadata
+    }
 
     public init(
         version: Int = CanvasSchemaVersion.current,
@@ -377,6 +526,7 @@ public struct CanvasProject: Codable, Hashable, Sendable {
         canvasSize: CanvasSize,
         background: CanvasBackground,
         nodes: [CanvasNode],
+        eraserStrokes: [CanvasEraserStroke] = [],
         metadata: CanvasProjectMetadata = CanvasProjectMetadata()
     ) {
         self.version = version
@@ -384,17 +534,41 @@ public struct CanvasProject: Codable, Hashable, Sendable {
         self.canvasSize = canvasSize
         self.background = background
         self.nodes = nodes
+        self.eraserStrokes = eraserStrokes
         self.metadata = metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? CanvasSchemaVersion.current
+        templateID = try container.decode(String.self, forKey: .templateID)
+        canvasSize = try container.decode(CanvasSize.self, forKey: .canvasSize)
+        background = try container.decode(CanvasBackground.self, forKey: .background)
+        nodes = try container.decode([CanvasNode].self, forKey: .nodes)
+        eraserStrokes = try container.decodeIfPresent([CanvasEraserStroke].self, forKey: .eraserStrokes) ?? []
+        metadata = try container.decodeIfPresent(CanvasProjectMetadata.self, forKey: .metadata) ?? CanvasProjectMetadata()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(templateID, forKey: .templateID)
+        try container.encode(canvasSize, forKey: .canvasSize)
+        try container.encode(background, forKey: .background)
+        try container.encode(nodes, forKey: .nodes)
+        try container.encode(eraserStrokes, forKey: .eraserStrokes)
+        try container.encode(metadata, forKey: .metadata)
     }
 
     public init(template: CanvasTemplate) {
         let now = Date()
         self.init(
-            version: template.version,
+            version: CanvasSchemaVersion.current,
             templateID: template.id,
             canvasSize: template.canvasSize,
             background: template.background,
             nodes: template.nodes.sorted(by: { $0.zIndex < $1.zIndex }),
+            eraserStrokes: [],
             metadata: CanvasProjectMetadata(createdAt: now, modifiedAt: now)
         )
     }
@@ -424,6 +598,7 @@ public struct CanvasStickerDescriptor: Hashable, Identifiable, Sendable {
 }
 
 public enum CanvasEditorTool: String, CaseIterable, Sendable {
+    case addBrush
     case addText
     case addEmoji
     case addSticker

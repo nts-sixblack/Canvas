@@ -374,3 +374,280 @@ private final class InspectorSliderRow: UIView {
         }
     }
 }
+
+protocol CanvasBrushInspectorViewDelegate: AnyObject {
+    func canvasBrushInspectorViewDidCancel(_ brushInspectorView: CanvasBrushInspectorView)
+    func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didChange configuration: CanvasBrushConfiguration)
+    func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didConfirm configuration: CanvasBrushConfiguration)
+}
+
+enum CanvasBrushInspectorMode {
+    case brush
+    case eraser
+}
+
+final class CanvasBrushInspectorView: UIView {
+    weak var delegate: CanvasBrushInspectorViewDelegate?
+
+    private let contentStack = UIStackView()
+    private let cancelButton = UIButton(type: .system)
+    private let titleLabel = UILabel()
+    private let confirmButton = UIButton(type: .system)
+    private let shapeStack = UIStackView()
+    private let colorStack = UIStackView()
+    private let sizeRow = BrushInspectorSliderRow(title: "Size", range: 4...48)
+    private let opacityRow = BrushInspectorSliderRow(title: "Opacity", range: 0.1...1.0)
+    private lazy var shapeSectionView = section(title: "Shape", contentView: shapeStack)
+    private lazy var sizeSectionView = section(title: "Size", contentView: sizeRow)
+    private lazy var opacitySectionView = section(title: "Opacity", contentView: opacityRow)
+    private lazy var colorSectionView = section(title: "Color", contentView: colorStack)
+
+    private var palette: [CanvasColor] = []
+    private var isApplyingState = false
+    private var shapeButtons: [CanvasShapeType: UIButton] = [:]
+    private var currentConfiguration = CanvasBrushConfiguration.defaultValue
+    private var inspectorMode: CanvasBrushInspectorMode = .brush
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor(red: 0.11, green: 0.13, blue: 0.17, alpha: 0.96)
+        layer.cornerRadius = 28
+
+        contentStack.axis = .vertical
+        contentStack.spacing = 18
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentStack)
+
+        configureHeader()
+        configureShapeSection()
+
+        sizeRow.onChange = { [weak self] value in
+            guard let self, !self.isApplyingState else { return }
+            self.currentConfiguration.strokeWidth = value
+            self.notifyConfigurationDidChange()
+        }
+        opacityRow.onChange = { [weak self] value in
+            guard let self, !self.isApplyingState else { return }
+            self.currentConfiguration.opacity = value
+            self.notifyConfigurationDidChange()
+        }
+
+        contentStack.addArrangedSubview(shapeSectionView)
+        contentStack.addArrangedSubview(sizeSectionView)
+        contentStack.addArrangedSubview(opacitySectionView)
+
+        colorStack.axis = .horizontal
+        colorStack.spacing = 10
+        colorStack.distribution = .fillEqually
+        contentStack.addArrangedSubview(colorSectionView)
+
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 18),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.bottomAnchor, constant: -18)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(palette: [CanvasColor]) {
+        self.palette = palette
+        rebuildPalette()
+        apply(configuration: currentConfiguration)
+    }
+
+    func apply(configuration: CanvasBrushConfiguration, mode: CanvasBrushInspectorMode = .brush) {
+        inspectorMode = mode
+        currentConfiguration = configuration
+        isApplyingState = true
+        sizeRow.value = configuration.strokeWidth
+        opacityRow.value = configuration.opacity
+        updateShapeSelection(selectedType: configuration.type)
+        updatePaletteSelection(selectedColor: configuration.color)
+        isApplyingState = false
+        updatePresentation()
+    }
+
+    private func configureHeader() {
+        cancelButton.configuration = .plain()
+        cancelButton.configuration?.image = UIImage(systemName: "xmark")
+        cancelButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        cancelButton.configuration?.baseForegroundColor = .white
+        cancelButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.delegate?.canvasBrushInspectorViewDidCancel(self)
+        }, for: .touchUpInside)
+
+        titleLabel.text = "Brush"
+        titleLabel.font = UIFont.systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textColor = .white
+        titleLabel.textAlignment = .center
+
+        confirmButton.configuration = .plain()
+        confirmButton.configuration?.image = UIImage(systemName: "checkmark")
+        confirmButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        confirmButton.configuration?.baseForegroundColor = .white
+        confirmButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.delegate?.canvasBrushInspectorView(self, didConfirm: self.currentConfiguration)
+        }, for: .touchUpInside)
+
+        let headerStack = UIStackView(arrangedSubviews: [cancelButton, UIView(), titleLabel, UIView(), confirmButton])
+        headerStack.axis = .horizontal
+        headerStack.alignment = .center
+        contentStack.addArrangedSubview(headerStack)
+    }
+
+    private func configureShapeSection() {
+        shapeStack.axis = .horizontal
+        shapeStack.spacing = 10
+        shapeStack.distribution = .fillEqually
+
+        CanvasShapeType.allCases.forEach { shapeType in
+            let button = UIButton(type: .system)
+            button.configuration = .bordered()
+            button.configuration?.image = UIImage(systemName: shapeType.systemImageName)
+            button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+            button.configuration?.baseForegroundColor = .white
+            button.configuration?.baseBackgroundColor = UIColor.white.withAlphaComponent(0.08)
+            button.layer.cornerRadius = 16
+            button.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                self.currentConfiguration.type = shapeType
+                self.updateShapeSelection(selectedType: shapeType)
+                self.notifyConfigurationDidChange()
+            }, for: .touchUpInside)
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            shapeButtons[shapeType] = button
+            shapeStack.addArrangedSubview(button)
+        }
+    }
+
+    private func rebuildPalette() {
+        colorStack.arrangedSubviews.forEach {
+            colorStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        palette.forEach { color in
+            let button = UIButton(type: .system)
+            button.backgroundColor = color.uiColor
+            button.layer.cornerRadius = 18
+            button.layer.borderWidth = 2
+            button.layer.borderColor = UIColor.clear.cgColor
+            button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+            button.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                self.currentConfiguration.color = color
+                self.updatePaletteSelection(selectedColor: color)
+                self.notifyConfigurationDidChange()
+            }, for: .touchUpInside)
+            colorStack.addArrangedSubview(button)
+        }
+    }
+
+    private func updateShapeSelection(selectedType: CanvasShapeType) {
+        shapeButtons.forEach { type, button in
+            let isSelected = type == selectedType
+            button.configuration?.baseForegroundColor = isSelected ? .black : .white
+            button.configuration?.baseBackgroundColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.08)
+        }
+    }
+
+    private func updatePaletteSelection(selectedColor: CanvasColor) {
+        for (index, subview) in colorStack.arrangedSubviews.enumerated() {
+            guard let button = subview as? UIButton, palette.indices.contains(index) else {
+                continue
+            }
+            button.layer.borderColor = palette[index] == selectedColor ? UIColor.white.cgColor : UIColor.clear.cgColor
+        }
+    }
+
+    private func section(title: String, contentView: UIView) -> UIView {
+        let titleLabel = UILabel()
+        titleLabel.text = title
+        titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+        titleLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+
+        let stack = UIStackView(arrangedSubviews: [titleLabel, contentView])
+        stack.axis = .vertical
+        stack.spacing = 10
+        return stack
+    }
+
+    private func notifyConfigurationDidChange() {
+        delegate?.canvasBrushInspectorView(self, didChange: currentConfiguration)
+    }
+
+    private func updatePresentation() {
+        let isEraser = inspectorMode == .eraser
+        titleLabel.text = isEraser ? "Eraser" : "Brush"
+        shapeSectionView.isHidden = isEraser
+        opacitySectionView.isHidden = isEraser
+        colorSectionView.isHidden = isEraser
+    }
+}
+
+private final class BrushInspectorSliderRow: UIView {
+    var onChange: ((Double) -> Void)?
+
+    private let valueLabel = UILabel()
+    private let slider = UISlider()
+    private let range: ClosedRange<Double>
+
+    init(title: String, range: ClosedRange<Double>) {
+        self.range = range
+        super.init(frame: .zero)
+
+        let titleLabel = UILabel()
+        titleLabel.text = title
+        titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+        titleLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+
+        valueLabel.textColor = .white
+        valueLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        valueLabel.textAlignment = .right
+
+        let headerStack = UIStackView(arrangedSubviews: [titleLabel, UIView(), valueLabel])
+        headerStack.axis = .horizontal
+
+        slider.minimumValue = Float(range.lowerBound)
+        slider.maximumValue = Float(range.upperBound)
+        slider.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.valueLabel.text = String(format: "%.1f", self.slider.value)
+            self.onChange?(Double(self.slider.value))
+        }, for: .valueChanged)
+
+        let stack = UIStackView(arrangedSubviews: [headerStack, slider])
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var value: Double {
+        get { Double(slider.value) }
+        set {
+            let clampedValue = min(max(newValue, range.lowerBound), range.upperBound)
+            slider.value = Float(clampedValue)
+            valueLabel.text = String(format: "%.1f", clampedValue)
+        }
+    }
+}

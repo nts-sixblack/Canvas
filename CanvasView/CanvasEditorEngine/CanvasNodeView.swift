@@ -3,6 +3,7 @@ import UIKit
 final class CanvasNodeView: UIView {
     private let textLabel = UILabel()
     private let imageView = UIImageView()
+    private let shapeLayer = CAShapeLayer()
     private let placeholderView = UIView()
     private let placeholderLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -33,6 +34,11 @@ final class CanvasNodeView: UIView {
         loadingIndicator.color = .white
         loadingIndicator.hidesWhenStopped = true
 
+        shapeLayer.fillColor = UIColor.clear.cgColor
+        shapeLayer.lineCap = .round
+        shapeLayer.lineJoin = .round
+        layer.addSublayer(shapeLayer)
+
         addSubview(placeholderView)
         placeholderView.addSubview(placeholderLabel)
         placeholderView.addSubview(loadingIndicator)
@@ -48,6 +54,7 @@ final class CanvasNodeView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let insetBounds = bounds.insetBy(dx: 8, dy: 8)
+        shapeLayer.frame = bounds
         textLabel.frame = insetBounds
         imageView.frame = bounds
         placeholderView.frame = bounds
@@ -68,14 +75,21 @@ final class CanvasNodeView: UIView {
         switch node.kind {
         case .text, .emoji:
             applyText(node: node)
+            shapeLayer.isHidden = true
             imageView.isHidden = true
             placeholderView.isHidden = true
             textLabel.isHidden = false
 
         case .sticker, .image:
             applyImage(node: node, assetLoader: assetLoader)
+            shapeLayer.isHidden = true
             textLabel.isHidden = true
             imageView.isHidden = false
+
+        case .shape:
+            applyShape(node: node)
+            textLabel.isHidden = true
+            imageView.isHidden = true
         }
     }
 
@@ -114,5 +128,22 @@ final class CanvasNodeView: UIView {
             self.placeholderLabel.text = image == nil ? "Image" : ""
             self.placeholderView.isHidden = image != nil
         }
+    }
+
+    private func applyShape(node: CanvasNode) {
+        shapeLayer.isHidden = false
+        imageView.isHidden = true
+        placeholderView.isHidden = true
+        textLabel.isHidden = true
+        loadingIndicator.stopAnimating()
+
+        guard let payload = node.shape else {
+            shapeLayer.path = nil
+            return
+        }
+
+        shapeLayer.strokeColor = payload.strokeColor.uiColor.cgColor
+        shapeLayer.lineWidth = payload.strokeWidth
+        shapeLayer.path = payload.bezierPath().cgPath
     }
 }

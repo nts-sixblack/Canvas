@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 @testable import CanvasEditorCore
 
@@ -199,6 +200,229 @@ final class CanvasEditorCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(imageNode.size.height, store.project.canvasSize.height * 0.42 + 0.001)
     }
 
+    func testBatchEmojiInsertUsesSingleUndoAndStaggersPositions() {
+        let store = CanvasEditorStore(template: Self.sampleTemplate, configuration: .demo)
+        let initialCount = store.project.nodes.count
+
+        store.addEmojiNodes(texts: ["😀", "🥳", "🤩"])
+
+        XCTAssertEqual(store.project.nodes.count, initialCount + 3)
+
+        let insertedNodes = Array(store.project.sortedNodes.suffix(3))
+        XCTAssertEqual(insertedNodes.map(\.kind), [.emoji, .emoji, .emoji])
+        XCTAssertEqual(insertedNodes.last?.id, store.selectedNodeID)
+        XCTAssertEqual(Set(insertedNodes.map(\.transform.position)).count, 3)
+
+        store.undo()
+
+        XCTAssertEqual(store.project.nodes.count, initialCount)
+    }
+
+    func testShapeNodeRoundTripAndLegacyProjectDecode() throws {
+        let project = CanvasProject(
+            templateID: "shape-template",
+            canvasSize: CanvasSize(width: 1080, height: 1920),
+            background: .solid(.black),
+            nodes: [
+                CanvasNode(
+                    kind: .shape,
+                    name: "Arrow",
+                    transform: CanvasTransform(position: CanvasPoint(x: 540, y: 960), rotation: 0.35, scale: 1.2),
+                    size: CanvasSize(width: 320, height: 120),
+                    zIndex: 0,
+                    opacity: 0.72,
+                    shape: CanvasShapePayload(
+                        type: .arrow,
+                        points: [
+                            CanvasPoint(x: 20, y: 60),
+                            CanvasPoint(x: 300, y: 60)
+                        ],
+                        strokeColor: .accent,
+                        strokeWidth: 18
+                    )
+                )
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        let data = try encoder.encode(project)
+        let decoded = try decoder.decode(CanvasProject.self, from: data)
+
+        XCTAssertEqual(decoded.version, CanvasSchemaVersion.current)
+        XCTAssertEqual(decoded.nodes.first?.kind, .shape)
+        XCTAssertEqual(decoded.nodes.first?.shape?.type, .arrow)
+        XCTAssertEqual(decoded.nodes.first?.shape?.strokeColor, .accent)
+
+        let legacyData = Data(
+            """
+            {
+              "version": 1,
+              "templateID": "legacy-template",
+              "canvasSize": { "width": 1080, "height": 1920 },
+              "background": { "kind": "solidColor", "color": { "red": 0, "green": 0, "blue": 0, "alpha": 1 } },
+              "nodes": [
+                {
+                  "id": "legacy-text",
+                  "kind": "text",
+                  "transform": {
+                    "position": { "x": 120, "y": 180 },
+                    "rotation": 0,
+                    "scale": 1
+                  },
+                  "size": { "width": 240, "height": 80 },
+                  "zIndex": 0,
+                  "opacity": 1,
+                  "text": "Legacy",
+                  "style": {
+                    "fontFamily": "Avenir Next",
+                    "weight": "bold",
+                    "isItalic": false,
+                    "fontSize": 42,
+                    "foregroundColor": { "red": 1, "green": 1, "blue": 1, "alpha": 1 },
+                    "alignment": "center",
+                    "letterSpacing": 0,
+                    "lineSpacing": 0,
+                    "opacity": 1
+                  }
+                }
+              ],
+              "metadata": {}
+            }
+            """.utf8
+        )
+
+        let legacyProject = try decoder.decode(CanvasProject.self, from: legacyData)
+        XCTAssertEqual(legacyProject.version, 1)
+        XCTAssertEqual(legacyProject.nodes.first?.kind, .text)
+        XCTAssertNil(legacyProject.nodes.first?.shape)
+        XCTAssertTrue(legacyProject.eraserStrokes.isEmpty)
+    }
+
+    func testProjectEraserStrokesRoundTripPreservesData() throws {
+        let project = CanvasProject(
+            templateID: "eraser-template",
+            canvasSize: CanvasSize(width: 1080, height: 1920),
+            background: .solid(.black),
+            nodes: [],
+            eraserStrokes: [
+                CanvasEraserStroke(
+                    points: [
+                        CanvasPoint(x: 120, y: 220),
+                        CanvasPoint(x: 240, y: 360)
+                    ],
+                    strokeWidth: 22
+                )
+            ]
+        )
+
+        let data = try JSONEncoder().encode(project)
+        let decoded = try JSONDecoder().decode(CanvasProject.self, from: data)
+
+        XCTAssertEqual(decoded.version, CanvasSchemaVersion.current)
+        XCTAssertEqual(decoded.eraserStrokes, project.eraserStrokes)
+    }
+
+    func testStoreAddShapeNodeSupportsUndoRedo() {
+        let store = CanvasEditorStore(template: Self.sampleTemplate, configuration: .demo)
+        let draft = CanvasShapeDraft(
+            type: .brush,
+            points: [
+                CanvasPoint(x: 120, y: 220),
+                CanvasPoint(x: 180, y: 260),
+                CanvasPoint(x: 260, y: 300)
+            ],
+            strokeColor: .sky,
+            strokeWidth: 24,
+            opacity: 0.8
+        )
+
+        store.addShapeNode(from: draft)
+
+        guard let shapeNode = store.selectedNode else {
+            XCTFail("Expected shape node to be selected after creation")
+            return
+        }
+
+        XCTAssertEqual(shapeNode.kind, .shape)
+        XCTAssertEqual(shapeNode.shape?.type, .brush)
+        XCTAssertEqual(shapeNode.shape?.strokeColor, .sky)
+        XCTAssertEqual(shapeNode.opacity, 0.8, accuracy: 0.001)
+        XCTAssertGreaterThan(shapeNode.size.width, 0)
+        XCTAssertGreaterThan(shapeNode.size.height, 0)
+
+        let createdID = shapeNode.id
+
+        store.undo()
+        XCTAssertFalse(store.project.nodes.contains(where: { $0.id == createdID }))
+
+        store.redo()
+        XCTAssertTrue(store.project.nodes.contains(where: { $0.id == createdID }))
+    }
+
+    func testStoreAddEraserStrokeSupportsUndoRedo() {
+        let store = CanvasEditorStore(template: Self.sampleTemplate, configuration: .demo)
+        let stroke = CanvasEraserStroke(
+            points: [
+                CanvasPoint(x: 90, y: 120),
+                CanvasPoint(x: 210, y: 180),
+                CanvasPoint(x: 320, y: 260)
+            ],
+            strokeWidth: 20
+        )
+
+        store.addEraserStroke(stroke)
+
+        XCTAssertEqual(store.project.eraserStrokes, [stroke])
+
+        store.undo()
+        XCTAssertTrue(store.project.eraserStrokes.isEmpty)
+
+        store.redo()
+        XCTAssertEqual(store.project.eraserStrokes, [stroke])
+    }
+
+    func testUpdateSelectedShapeStylePreservesTransform() {
+        let store = CanvasEditorStore(template: Self.sampleTemplate, configuration: .demo)
+        store.addShapeNode(
+            from: CanvasShapeDraft(
+                type: .line,
+                points: [
+                    CanvasPoint(x: 160, y: 240),
+                    CanvasPoint(x: 420, y: 520)
+                ],
+                strokeColor: .white,
+                strokeWidth: 10,
+                opacity: 1
+            )
+        )
+
+        guard let before = store.selectedNode else {
+            XCTFail("Expected created shape node")
+            return
+        }
+
+        store.updateSelectedShapeStyle(
+            type: .rectangle,
+            strokeColor: .sunflower,
+            strokeWidth: 28,
+            opacity: 0.64
+        )
+
+        guard let after = store.selectedNode else {
+            XCTFail("Expected selected shape node after style update")
+            return
+        }
+
+        XCTAssertEqual(after.kind, .shape)
+        XCTAssertEqual(after.transform, before.transform)
+        XCTAssertEqual(after.shape?.type, .rectangle)
+        XCTAssertEqual(after.shape?.strokeColor, .sunflower)
+        XCTAssertEqual(after.shape?.strokeWidth ?? 0, 28, accuracy: 0.001)
+        XCTAssertEqual(after.opacity, 0.64, accuracy: 0.001)
+    }
+
     func testProjectSummaryIncludesCanvasAndInlineImageMetadata() {
         let project = CanvasProject(
             templateID: "summary-template",
@@ -230,6 +454,32 @@ final class CanvasEditorCoreTests: XCTestCase {
         XCTAssertEqual(summary.nodeCount, 2)
         XCTAssertEqual(summary.canvasSize, CanvasSize(width: 1080, height: 1920))
         XCTAssertTrue(summary.containsInlineImages)
+    }
+
+    func testEraserPathBuilderClearsPixelsInsideStroke() {
+        guard let context = Self.makeBitmapContext(width: 64, height: 64) else {
+            XCTFail("Expected bitmap context")
+            return
+        }
+
+        context.setFillColor(CGColor(red: 1, green: 0.2, blue: 0.2, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+
+        CanvasEraserPathBuilder.applyClearStrokes(
+            [
+                CanvasEraserStroke(
+                    points: [
+                        CanvasPoint(x: 8, y: 32),
+                        CanvasPoint(x: 56, y: 32)
+                    ],
+                    strokeWidth: 14
+                )
+            ],
+            in: context
+        )
+
+        XCTAssertEqual(Self.alpha(in: context, x: 32, y: 32), 0)
+        XCTAssertEqual(Self.alpha(in: context, x: 8, y: 8), 255)
     }
 
     func testProjectSummaryDetectsProjectsWithoutInlineImages() {
@@ -311,5 +561,35 @@ final class CanvasEditorCoreTests: XCTestCase {
             template.nodes[lockedIndex].isEditable = false
         }
         return template
+    }
+
+    private static func makeBitmapContext(width: Int, height: Int) -> CGContext? {
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+            return nil
+        }
+
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.union(
+            CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        )
+
+        return CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        )
+    }
+
+    private static func alpha(in context: CGContext, x: Int, y: Int) -> UInt8 {
+        guard let data = context.data else {
+            return 0
+        }
+
+        let bytes = data.bindMemory(to: UInt8.self, capacity: context.bytesPerRow * context.height)
+        let offset = (y * context.bytesPerRow) + (x * 4) + 3
+        return bytes[offset]
     }
 }
