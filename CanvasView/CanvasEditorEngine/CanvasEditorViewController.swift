@@ -109,17 +109,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private lazy var deleteButton = makeGridToolButton(title: "Delete", systemImage: "trash")
     private lazy var undoButton = makeHistoryButton(title: "Undo", systemImage: "arrow.uturn.backward")
     private lazy var redoButton = makeHistoryButton(title: "Redo", systemImage: "arrow.uturn.forward")
+    private lazy var layersButton = makeHistoryButton(title: "Layers", systemImage: "square.stack.3d.up.fill")
     private lazy var exportBarButtonItem = UIBarButtonItem(
         title: "Export",
         style: .prominent,
         target: self,
         action: #selector(exportTapped)
-    )
-    private lazy var layersBarButtonItem = UIBarButtonItem(
-        image: UIImage(systemName: "square.stack.3d.up.fill"),
-        style: .plain,
-        target: self,
-        action: #selector(layersTapped)
     )
 
     init(input: CanvasEditorInput, configuration: CanvasEditorConfiguration = .demo) {
@@ -160,7 +155,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             target: self,
             action: #selector(closeTapped)
         )
-        navigationItem.rightBarButtonItems = [exportBarButtonItem, layersBarButtonItem]
+        navigationItem.rightBarButtonItem = exportBarButtonItem
 
         stageView.store = store
         stageView.delegate = self
@@ -187,7 +182,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     private func setupLayout() {
-        [stageView, bottomPanel, historyActionsContainer, panelScrimView, inspectorContainerView, layerPanelView, loadingOverlayView].forEach {
+        [stageView, bottomPanel, historyActionsContainer, layersButton, panelScrimView, inspectorContainerView, layerPanelView, loadingOverlayView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -264,6 +259,11 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             historyActionsStack.topAnchor.constraint(equalTo: historyActionsContainer.topAnchor),
             historyActionsStack.bottomAnchor.constraint(equalTo: historyActionsContainer.bottomAnchor),
 
+            layersButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            layersButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -14),
+            layersButton.widthAnchor.constraint(equalToConstant: historyButtonSize),
+            layersButton.heightAnchor.constraint(equalToConstant: historyButtonSize),
+
             toolbarGridStack.leadingAnchor.constraint(equalTo: bottomPanel.leadingAnchor, constant: 18),
             toolbarGridStack.trailingAnchor.constraint(equalTo: bottomPanel.trailingAnchor, constant: -18),
             toolbarGridStack.topAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: 20),
@@ -321,8 +321,11 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
         historyButtons.forEach { button, action in
             button.addTarget(self, action: action, for: .touchUpInside)
+            button.widthAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
+            button.heightAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
             historyActionsStack.addArrangedSubview(button)
         }
+        layersButton.addTarget(self, action: #selector(layersTapped), for: .touchUpInside)
 
         toolbarGridStack.addArrangedSubview(makeToolbarRow([
             addTextButton,
@@ -462,7 +465,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         inspectorContainerView.isUserInteractionEnabled = !isBusy
         navigationItem.leftBarButtonItem?.isEnabled = !isBusy
         exportBarButtonItem.isEnabled = !isBusy
-        layersBarButtonItem.isEnabled = !isBusy
+        layersButton.isEnabled = !isBusy
         layerPanelView.isUserInteractionEnabled = !isBusy && isLayerPanelVisible
 
         if isBusy {
@@ -539,9 +542,8 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     private func updateLayerButtonAppearance() {
-        layersBarButtonItem.tintColor = isLayerPanelVisible
-            ? CanvasEditorTheme.accent
-            : .white
+        layersButton.isSelected = isLayerPanelVisible
+        layersButton.setNeedsUpdateConfiguration()
     }
 
     private func setLayerPanelVisible(_ visible: Bool, animated: Bool) {
@@ -673,14 +675,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
                 return
             }
             updatedConfiguration.baseForegroundColor = button.isEnabled
-                ? CanvasEditorTheme.primaryText
+                ? (button.isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.primaryText)
                 : CanvasEditorTheme.secondaryText
             updatedConfiguration.background.backgroundColor = CanvasEditorTheme.cardSurface
             button.configuration = updatedConfiguration
             button.alpha = button.isEnabled ? 1 : 0.5
         }
-        button.widthAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
-        button.heightAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
         return button
     }
 
