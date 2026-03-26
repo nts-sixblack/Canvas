@@ -81,7 +81,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private var loadingState: CanvasEditorLoadingState = .none
     private var currentVisibleInspectorKind: VisibleInspectorKind = .none
     private var activeTextColorPickerTarget: CanvasTextInspectorColorTarget?
-    private var brushConfiguration = CanvasBrushConfiguration.defaultValue {
+    private var committedBrushConfiguration = CanvasBrushConfiguration.defaultValue {
         didSet {
             guard isViewLoaded else {
                 return
@@ -89,7 +89,9 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             updateBrushButtonAppearance()
         }
     }
+    private var brushDraftConfiguration: CanvasBrushConfiguration?
     private var eraserStrokeWidth: Double = 24
+    private var isBrushModeEnabled = false
     private var isEraserModeEnabled = false
 
     private var projectObserverID: UUID?
@@ -363,6 +365,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         deleteButton.isEnabled = hasSelection
         undoButton.isEnabled = store.canUndo
         redoButton.isEnabled = store.canRedo
+        updateBrushButtonAppearance()
         updateLayerButtonAppearance()
         updateEraserButtonAppearance()
         updateVisibleInspector(animated: true)
@@ -633,8 +636,9 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             return
         }
 
-        configuration.image = UIImage(systemName: brushConfiguration.type.systemImageName)
+        configuration.image = UIImage(systemName: committedBrushConfiguration.type.systemImageName)
         addBrushButton.configuration = configuration
+        addBrushButton.isSelected = isBrushModeEnabled
         addBrushButton.setNeedsUpdateConfiguration()
     }
 
@@ -678,7 +682,10 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         return button
     }
 
-    private func dismissInspector(animated: Bool) {
+    private func dismissInspector(animated: Bool, revertingBrushDraft: Bool = true) {
+        if revertingBrushDraft {
+            brushDraftConfiguration = nil
+        }
         isInspectorRequested = false
         brushInspectorMode = nil
         updateVisibleInspector(animated: animated)
@@ -694,9 +701,28 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         setLayerPanelVisible(false, animated: true)
         isInspectorRequested = false
         brushInspectorMode = mode
-        brushConfiguration = configuration
+        brushDraftConfiguration = configuration
         brushInspectorView.apply(configuration: configuration)
         updateVisibleInspector(animated: true)
+    }
+
+    private func setBrushModeEnabled(_ enabled: Bool, animated _: Bool, configuration: CanvasBrushConfiguration? = nil) {
+        guard enabled != isBrushModeEnabled || (enabled && configuration != nil) else {
+            return
+        }
+
+        if enabled {
+            cancelActiveToolMode()
+            let activeConfiguration = configuration ?? committedBrushConfiguration
+            isBrushModeEnabled = true
+            updateBrushButtonAppearance()
+            store.selectNode(nil)
+            stageView.beginDrawing(with: activeConfiguration)
+        } else {
+            stageView.cancelDrawingMode()
+            isBrushModeEnabled = false
+            updateBrushButtonAppearance()
+        }
     }
 
     private func setEraserModeEnabled(_ enabled: Bool, animated: Bool) {
@@ -718,12 +744,16 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func cancelActiveToolMode() {
         stageView.cancelDrawingMode()
-        guard isEraserModeEnabled else {
-            return
+
+        if isBrushModeEnabled {
+            isBrushModeEnabled = false
+            updateBrushButtonAppearance()
         }
 
-        isEraserModeEnabled = false
-        updateEraserButtonAppearance()
+        if isEraserModeEnabled {
+            isEraserModeEnabled = false
+            updateEraserButtonAppearance()
+        }
     }
 
     private func applyTextStyleMutation(_ mutation: (inout CanvasTextStyle) -> Void) {
@@ -860,26 +890,28 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didChange configuration: CanvasBrushConfiguration) {
-        brushConfiguration = configuration
+        brushDraftConfiguration = configuration
     }
 
     func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didConfirm configuration: CanvasBrushConfiguration) {
+        let resolvedConfiguration = brushDraftConfiguration ?? configuration
+
         switch brushInspectorMode {
         case .create:
-            brushConfiguration = configuration
-            dismissInspector(animated: true)
-            store.selectNode(nil)
-            stageView.beginDrawing(with: configuration)
+            committedBrushConfiguration = resolvedConfiguration
+            brushDraftConfiguration = nil
+            dismissInspector(animated: true, revertingBrushDraft: false)
+            setBrushModeEnabled(true, animated: true, configuration: resolvedConfiguration)
 
         case .edit:
-            brushConfiguration = configuration
+            brushDraftConfiguration = nil
             store.updateSelectedShapeStyle(
-                type: configuration.type,
-                strokeColor: configuration.color,
-                strokeWidth: configuration.strokeWidth,
-                opacity: configuration.opacity
+                type: resolvedConfiguration.type,
+                strokeColor: resolvedConfiguration.color,
+                strokeWidth: resolvedConfiguration.strokeWidth,
+                opacity: resolvedConfiguration.opacity
             )
-            dismissInspector(animated: true)
+            dismissInspector(animated: true, revertingBrushDraft: false)
 
         case .none:
             dismissInspector(animated: true)
@@ -938,13 +970,16 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     func canvasStageView(_ stageView: CanvasStageView, didFinishDrawing draft: CanvasShapeDraft) {
-        brushConfiguration = CanvasBrushConfiguration(
+        committedBrushConfiguration = CanvasBrushConfiguration(
             type: draft.type,
             strokeWidth: draft.strokeWidth,
             opacity: draft.opacity,
             color: draft.strokeColor
         )
         store.addShapeNode(from: draft)
+        if isBrushModeEnabled {
+            store.selectNode(nil)
+        }
     }
 
     func canvasStageView(_ stageView: CanvasStageView, didFinishErasing stroke: CanvasEraserStroke) {
@@ -1151,8 +1186,13 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     @objc
     private func addBrushTapped() {
+        if isBrushModeEnabled {
+            setBrushModeEnabled(false, animated: true)
+            return
+        }
+
         cancelActiveToolMode()
-        presentBrushInspector(mode: .create, configuration: brushConfiguration)
+        presentBrushInspector(mode: .create, configuration: committedBrushConfiguration)
     }
 
     @objc

@@ -684,7 +684,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
                 if let draft = currentShapeDraft(using: configuration) {
                     delegate?.canvasStageView(self, didFinishDrawing: draft)
                 }
-                cancelDrawingMode()
+                resetCurrentToolStrokePreview()
             case .erasing(let strokeWidth):
                 if let stroke = currentEraserStroke(strokeWidth: strokeWidth) {
                     delegate?.canvasStageView(self, didFinishErasing: stroke)
@@ -695,7 +695,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         case .cancelled, .failed:
             switch toolMode {
             case .drawing:
-                cancelDrawingMode()
+                resetCurrentToolStrokePreview()
             case .erasing:
                 resetCurrentToolStrokePreview()
             }
@@ -893,6 +893,12 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     }
 
     private func updateSelectionOverlay() {
+        guard !isToolModeActive else {
+            selectionOverlay.isHidden = true
+            [deleteHandle, widthHandle, heightHandle, transformHandle].forEach { $0.isHidden = true }
+            return
+        }
+
         guard let store,
               let selectedNodeID = store.selectedNodeID,
               let selectedView = nodeViews[selectedNodeID],

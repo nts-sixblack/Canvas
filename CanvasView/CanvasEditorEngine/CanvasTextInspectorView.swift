@@ -820,19 +820,23 @@ protocol CanvasBrushInspectorViewDelegate: AnyObject {
 }
 
 final class CanvasBrushInspectorView: UIView {
+    private enum Layout {
+        static let horizontalInset: CGFloat = 18
+        static let verticalInset: CGFloat = 14
+    }
+
     weak var delegate: CanvasBrushInspectorViewDelegate?
 
+    private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let confirmButton = UIButton(type: .system)
     private let shapeStack = UIStackView()
     private let colorStack = UIStackView()
-    private let sizeRow = BrushInspectorSliderRow(title: "Size", range: 4...48)
-    private let opacityRow = BrushInspectorSliderRow(title: "Opacity", range: 0.1...1.0)
+    private let sizeRow = InspectorSliderRow(title: "Size", range: 4...48)
+    private let opacityRow = InspectorSliderRow(title: "Opacity", range: 0.1...1.0)
     private lazy var shapeSectionView = section(title: "Shape", contentView: shapeStack)
-    private lazy var sizeSectionView = section(title: "Size", contentView: sizeRow)
-    private lazy var opacitySectionView = section(title: "Opacity", contentView: opacityRow)
     private lazy var colorSectionView = section(title: "Color", contentView: colorStack)
 
     private var palette: [CanvasColor] = []
@@ -846,10 +850,14 @@ final class CanvasBrushInspectorView: UIView {
         layer.cornerRadius = 28
         layer.cornerCurve = .continuous
 
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+
         contentStack.axis = .vertical
         contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(contentStack)
+        scrollView.addSubview(contentStack)
 
         configureHeader()
         configureShapeSection()
@@ -866,8 +874,8 @@ final class CanvasBrushInspectorView: UIView {
         }
 
         contentStack.addArrangedSubview(shapeSectionView)
-        contentStack.addArrangedSubview(sizeSectionView)
-        contentStack.addArrangedSubview(opacitySectionView)
+        contentStack.addArrangedSubview(sizeRow)
+        contentStack.addArrangedSubview(opacityRow)
 
         colorStack.axis = .horizontal
         colorStack.spacing = 10
@@ -875,10 +883,16 @@ final class CanvasBrushInspectorView: UIView {
         contentStack.addArrangedSubview(colorSectionView)
 
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
-            contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 18),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.bottomAnchor, constant: -18)
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Layout.horizontalInset),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Layout.horizontalInset),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: Layout.verticalInset),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Layout.verticalInset),
+
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
         ])
     }
 
@@ -891,6 +905,7 @@ final class CanvasBrushInspectorView: UIView {
         self.palette = palette
         rebuildPalette()
         apply(configuration: currentConfiguration)
+        invalidateContentLayout()
     }
 
     func apply(configuration: CanvasBrushConfiguration) {
@@ -901,27 +916,29 @@ final class CanvasBrushInspectorView: UIView {
         updateShapeSelection(selectedType: configuration.type)
         updatePaletteSelection(selectedColor: configuration.color)
         isApplyingState = false
+        invalidateContentLayout()
     }
 
     func preferredHeight(for width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
-        let contentWidth = max(width - 36, 1)
-        let contentHeight = contentStack.systemLayoutSizeFitting(
-            CGSize(width: contentWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        return min(maximumHeight, contentHeight + 36)
+        let contentWidth = max(width - (Layout.horizontalInset * 2), 1)
+        invalidateContentLayout()
+        layoutIfNeeded()
+        let contentHeight = measuredContentHeight(for: contentWidth)
+        return min(maximumHeight, contentHeight + (Layout.verticalInset * 2))
     }
 
     private func configureHeader() {
         cancelButton.configuration = .plain()
         cancelButton.configuration?.image = UIImage(systemName: "xmark")
-        cancelButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        cancelButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
         cancelButton.configuration?.baseForegroundColor = CanvasEditorTheme.destructive
+        cancelButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
         cancelButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.canvasBrushInspectorViewDidCancel(self)
         }, for: .touchUpInside)
+        cancelButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        cancelButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
         titleLabel.text = "Brush"
         titleLabel.font = UIFont.systemFont(ofSize: 18, weight: .semibold)
@@ -930,16 +947,24 @@ final class CanvasBrushInspectorView: UIView {
 
         confirmButton.configuration = .plain()
         confirmButton.configuration?.image = UIImage(systemName: "checkmark")
-        confirmButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
+        confirmButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
         confirmButton.configuration?.baseForegroundColor = CanvasEditorTheme.success
+        confirmButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
         confirmButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.canvasBrushInspectorView(self, didConfirm: self.currentConfiguration)
         }, for: .touchUpInside)
+        confirmButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        confirmButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
-        let headerStack = UIStackView(arrangedSubviews: [cancelButton, UIView(), titleLabel, UIView(), confirmButton])
+        let leadingSpacer = UIView()
+        let trailingSpacer = UIView()
+
+        let headerStack = UIStackView(arrangedSubviews: [cancelButton, leadingSpacer, titleLabel, trailingSpacer, confirmButton])
         headerStack.axis = .horizontal
         headerStack.alignment = .center
+        headerStack.spacing = 4
+        leadingSpacer.widthAnchor.constraint(equalTo: trailingSpacer.widthAnchor).isActive = true
         contentStack.addArrangedSubview(headerStack)
     }
 
@@ -1016,8 +1041,8 @@ final class CanvasBrushInspectorView: UIView {
 
     private func section(title: String, contentView: UIView) -> UIView {
         let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+        titleLabel.text = title.uppercased()
+        titleLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = CanvasEditorTheme.secondaryText
 
         let stack = UIStackView(arrangedSubviews: [titleLabel, contentView])
@@ -1045,70 +1070,21 @@ final class CanvasBrushInspectorView: UIView {
         return container
     }
 
+    private func measuredContentHeight(for width: CGFloat) -> CGFloat {
+        contentStack.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+    }
+
+    private func invalidateContentLayout() {
+        setNeedsLayout()
+        scrollView.setNeedsLayout()
+        contentStack.setNeedsLayout()
+    }
+
     private func notifyConfigurationDidChange() {
         delegate?.canvasBrushInspectorView(self, didChange: currentConfiguration)
-    }
-}
-
-private final class BrushInspectorSliderRow: UIView {
-    var onChange: ((Double) -> Void)?
-
-    private let valueLabel = UILabel()
-    private let slider = UISlider()
-    private let range: ClosedRange<Double>
-
-    init(title: String, range: ClosedRange<Double>) {
-        self.range = range
-        super.init(frame: .zero)
-
-        let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-        titleLabel.textColor = CanvasEditorTheme.secondaryText
-
-        valueLabel.textColor = CanvasEditorTheme.primaryText
-        valueLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        valueLabel.textAlignment = .right
-
-        let headerStack = UIStackView(arrangedSubviews: [titleLabel, UIView(), valueLabel])
-        headerStack.axis = .horizontal
-
-        slider.minimumValue = Float(range.lowerBound)
-        slider.maximumValue = Float(range.upperBound)
-        slider.minimumTrackTintColor = CanvasEditorTheme.accent
-        slider.maximumTrackTintColor = CanvasEditorTheme.separator
-        slider.thumbTintColor = CanvasEditorTheme.accent
-        slider.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            self.valueLabel.text = String(format: "%.1f", self.slider.value)
-            self.onChange?(Double(self.slider.value))
-        }, for: .valueChanged)
-
-        let stack = UIStackView(arrangedSubviews: [headerStack, slider])
-        stack.axis = .vertical
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    var value: Double {
-        get { Double(slider.value) }
-        set {
-            let clampedValue = min(max(newValue, range.lowerBound), range.upperBound)
-            slider.value = Float(clampedValue)
-            valueLabel.text = String(format: "%.1f", clampedValue)
-        }
     }
 }
