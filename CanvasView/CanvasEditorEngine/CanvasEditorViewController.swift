@@ -66,6 +66,8 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private let toolbarTileHeight: CGFloat = 82
     private let historyButtonSize: CGFloat = 58
+    private let canvasToHistorySpacing: CGFloat = 16
+    private let historyToBottomPanelSpacing: CGFloat = 16
     private let inspectorMaximumHeight: CGFloat = 360
     private let inspectorMinimumTopMargin: CGFloat = 44
     private let inspectorVisibleOffset: CGFloat = 0
@@ -248,14 +250,14 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             stageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             stageView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            stageView.bottomAnchor.constraint(equalTo: bottomPanel.topAnchor),
+            stageView.bottomAnchor.constraint(equalTo: historyActionsContainer.topAnchor, constant: -canvasToHistorySpacing),
 
             bottomPanel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomPanel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomPanel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             historyActionsContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            historyActionsContainer.bottomAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: -18),
+            historyActionsContainer.bottomAnchor.constraint(equalTo: bottomPanel.topAnchor, constant: -historyToBottomPanelSpacing),
 
             historyActionsStack.leadingAnchor.constraint(equalTo: historyActionsContainer.leadingAnchor),
             historyActionsStack.trailingAnchor.constraint(equalTo: historyActionsContainer.trailingAnchor),
