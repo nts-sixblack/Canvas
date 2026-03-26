@@ -9,6 +9,31 @@ extension CanvasColor {
             alpha: alpha
         )
     }
+
+    init(uiColor: UIColor) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        if uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            self.init(
+                red: red,
+                green: green,
+                blue: blue,
+                alpha: alpha
+            )
+            return
+        }
+
+        let fallback = CIColor(color: uiColor)
+        self.init(
+            red: fallback.red,
+            green: fallback.green,
+            blue: fallback.blue,
+            alpha: fallback.alpha
+        )
+    }
 }
 
 extension CanvasShapeType {
@@ -162,6 +187,20 @@ extension CanvasFontWeight {
 }
 
 extension CanvasTextStyle {
+    var resolvedBackgroundUIColor: UIColor? {
+        guard let backgroundFill else {
+            return nil
+        }
+
+        let color = backgroundFill.color
+        return CanvasColor(
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            alpha: color.alpha * opacity
+        ).uiColor
+    }
+
     func textAttributes() -> [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment.nsTextAlignment

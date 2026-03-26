@@ -136,6 +136,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
 
         selectionOverlay.isHidden = true
 
+        inlineTextView.isOpaque = false
         inlineTextView.backgroundColor = .clear
         inlineTextView.textContainerInset = .zero
         inlineTextView.textContainer.lineFragmentPadding = 0
@@ -942,7 +943,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         inlineTextView.center = node.transform.position.cgPoint
         inlineTextView.transform = CGAffineTransform(rotationAngle: node.transform.rotation)
             .scaledBy(x: node.transform.scale, y: node.transform.scale)
-        inlineTextView.backgroundColor = style.backgroundFill?.color.uiColor.withAlphaComponent(style.opacity * 0.35) ?? .clear
+        inlineTextView.backgroundColor = style.resolvedBackgroundUIColor ?? .clear
         inlineTextView.layer.cornerRadius = style.backgroundFill == nil ? 0 : 16
         inlineTextView.tintColor = style.foregroundColor.uiColor
         inlineTextView.textAlignment = style.alignment.nsTextAlignment

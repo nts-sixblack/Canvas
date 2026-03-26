@@ -17,6 +17,8 @@ final class CanvasNodeView: UIView {
 
         textLabel.numberOfLines = 0
         textLabel.adjustsFontSizeToFitWidth = false
+        textLabel.isOpaque = false
+        textLabel.backgroundColor = .clear
 
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
@@ -96,7 +98,7 @@ final class CanvasNodeView: UIView {
     private func applyText(node: CanvasNode) {
         let style = node.style ?? (node.kind == .emoji ? .defaultEmoji : .defaultText)
         textLabel.attributedText = style.attributedString(text: node.text ?? "")
-        textLabel.backgroundColor = style.backgroundFill?.color.uiColor.withAlphaComponent(style.opacity * 0.35)
+        textLabel.backgroundColor = style.resolvedBackgroundUIColor ?? .clear
         textLabel.layer.cornerRadius = style.backgroundFill == nil ? 0 : 16
         textLabel.clipsToBounds = style.backgroundFill != nil
     }

@@ -1,15 +1,20 @@
 import UIKit
 
+enum CanvasTextInspectorColorTarget {
+    case foreground
+    case background
+}
+
 protocol CanvasTextInspectorViewDelegate: AnyObject {
     func textInspectorViewDidRequestTextEdit(_ textInspectorView: CanvasTextInspectorView)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectFontFamily fontFamily: String)
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectWeight weight: CanvasFontWeight)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectAlignment alignment: CanvasTextAlignment)
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectColor color: CanvasColor)
+    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectColor color: CanvasColor, for target: CanvasTextInspectorColorTarget)
+    func textInspectorViewDidSelectClearBackground(_ textInspectorView: CanvasTextInspectorView)
+    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didRequestColorPickerFor target: CanvasTextInspectorColorTarget)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetItalic isItalic: Bool)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetShadow isEnabled: Bool)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetOutline isEnabled: Bool)
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetBackgroundFill isEnabled: Bool)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didChangeFontSize value: Double)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didChangeLetterSpacing value: Double)
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didChangeLineSpacing value: Double)
@@ -23,19 +28,31 @@ final class CanvasTextInspectorView: UIView {
     private let contentStack = UIStackView()
     private let titleLabel = UILabel()
     private let editTextButton = UIButton(type: .system)
-    private let fontButton = UIButton(type: .system)
-    private let weightControl = UISegmentedControl(items: ["R", "M", "SB", "B", "H"])
+    private let fontFamilyStripView = InspectorFontFamilyStripView()
     private let alignmentControl = UISegmentedControl(items: ["L", "C", "R"])
     private let italicButton = UIButton(type: .system)
     private let shadowButton = UIButton(type: .system)
     private let outlineButton = UIButton(type: .system)
-    private let backgroundButton = UIButton(type: .system)
-    private let colorStack = UIStackView()
+    private let textColorStripView = InspectorColorStripView(target: .foreground, showsClearChip: false)
+    private let backgroundColorStripView = InspectorColorStripView(target: .background, showsClearChip: true)
 
     private let fontSizeRow = InspectorSliderRow(title: "Font Size", range: 16...120)
     private let letterSpacingRow = InspectorSliderRow(title: "Letter Space", range: -4...24)
     private let lineSpacingRow = InspectorSliderRow(title: "Line Space", range: 0...32)
-    private let opacityRow = InspectorSliderRow(title: "Opacity", range: 0.1...1.0)
+    private let opacityRow = InspectorSliderRow(title: "Opacity", range: 0.0...1.0)
+
+    private lazy var fontSectionView = section(title: "Font", view: fontFamilyStripView)
+    private lazy var alignmentSectionView = section(title: "Alignment", view: alignmentControl)
+    private lazy var styleSectionView = section(title: "Style", view: toggleStack)
+    private lazy var textColorSectionView = section(title: "Text Color", view: textColorStripView)
+    private lazy var backgroundSectionView = section(title: "Background", view: backgroundColorStripView)
+    private lazy var toggleStack: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [italicButton, shadowButton, outlineButton])
+        stack.axis = .horizontal
+        stack.spacing = 10
+        stack.distribution = .fillEqually
+        return stack
+    }()
 
     private var fontFamilies: [String] = []
     private var palette: [CanvasColor] = []
@@ -69,27 +86,17 @@ final class CanvasTextInspectorView: UIView {
         headerStack.alignment = .center
         contentStack.addArrangedSubview(headerStack)
 
-        fontButton.configuration = .bordered()
-        fontButton.configuration?.title = "Font"
-        fontButton.showsMenuAsPrimaryAction = true
-        contentStack.addArrangedSubview(section(title: "Font Family", view: fontButton))
-
-        weightControl.selectedSegmentIndex = 3
-        weightControl.addAction(UIAction { [weak self] _ in
-            self?.didChangeWeight()
-        }, for: .valueChanged)
-        contentStack.addArrangedSubview(section(title: "Weight", view: weightControl))
+        fontFamilyStripView.onSelectFontFamily = { [weak self] fontFamily in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorView(self, didSelectFontFamily: fontFamily)
+        }
+        contentStack.addArrangedSubview(fontSectionView)
 
         alignmentControl.selectedSegmentIndex = 1
         alignmentControl.addAction(UIAction { [weak self] _ in
             self?.didChangeAlignment()
         }, for: .valueChanged)
-        contentStack.addArrangedSubview(section(title: "Alignment", view: alignmentControl))
-
-        let toggleStack = UIStackView(arrangedSubviews: [italicButton, shadowButton, outlineButton, backgroundButton])
-        toggleStack.axis = .horizontal
-        toggleStack.spacing = 10
-        toggleStack.distribution = .fillEqually
+        contentStack.addArrangedSubview(alignmentSectionView)
 
         configureToggleButton(italicButton, title: "Italic") { [weak self] in
             guard let self else { return }
@@ -103,16 +110,31 @@ final class CanvasTextInspectorView: UIView {
             guard let self else { return }
             self.delegate?.textInspectorView(self, didSetOutline: self.outlineButton.isSelected)
         }
-        configureToggleButton(backgroundButton, title: "Fill") { [weak self] in
-            guard let self else { return }
-            self.delegate?.textInspectorView(self, didSetBackgroundFill: self.backgroundButton.isSelected)
-        }
-        contentStack.addArrangedSubview(section(title: "Style", view: toggleStack))
+        contentStack.addArrangedSubview(styleSectionView)
 
-        colorStack.axis = .horizontal
-        colorStack.spacing = 10
-        colorStack.distribution = .fillEqually
-        contentStack.addArrangedSubview(section(title: "Color", view: colorStack))
+        textColorStripView.onSelectColor = { [weak self] color in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorView(self, didSelectColor: color, for: .foreground)
+        }
+        textColorStripView.onRequestPicker = { [weak self] in
+            guard let self else { return }
+            self.delegate?.textInspectorView(self, didRequestColorPickerFor: .foreground)
+        }
+        contentStack.addArrangedSubview(textColorSectionView)
+
+        backgroundColorStripView.onSelectColor = { [weak self] color in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorView(self, didSelectColor: color, for: .background)
+        }
+        backgroundColorStripView.onRequestPicker = { [weak self] in
+            guard let self else { return }
+            self.delegate?.textInspectorView(self, didRequestColorPickerFor: .background)
+        }
+        backgroundColorStripView.onSelectClear = { [weak self] in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorViewDidSelectClearBackground(self)
+        }
+        contentStack.addArrangedSubview(backgroundSectionView)
 
         [fontSizeRow, letterSpacingRow, lineSpacingRow, opacityRow].forEach { row in
             row.onChange = { [weak self, weak row] value in
@@ -153,81 +175,41 @@ final class CanvasTextInspectorView: UIView {
     func configure(fontFamilies: [String], palette: [CanvasColor]) {
         self.fontFamilies = fontFamilies
         self.palette = palette
-        rebuildFontMenu()
-        rebuildPalette()
+        fontFamilyStripView.configure(fontFamilies: fontFamilies)
+        textColorStripView.configure(palette: palette)
+        backgroundColorStripView.configure(palette: palette)
     }
 
     func apply(node: CanvasNode) {
-        guard let style = node.style else {
-            return
-        }
+        let style = node.style ?? (node.kind == .emoji ? .defaultEmoji : .defaultText)
 
         isHidden = false
         isApplyingState = true
         defer { isApplyingState = false }
 
-        fontButton.configuration?.title = style.fontFamily
-        weightControl.selectedSegmentIndex = index(for: style.weight)
+        if !fontFamilies.contains(style.fontFamily) {
+            fontFamilyStripView.configure(fontFamilies: fontFamilies + [style.fontFamily])
+        } else {
+            fontFamilyStripView.configure(fontFamilies: fontFamilies)
+        }
+        fontFamilyStripView.setSelectedFontFamily(style.fontFamily)
         alignmentControl.selectedSegmentIndex = index(for: style.alignment)
         italicButton.isSelected = style.isItalic
         shadowButton.isSelected = style.shadow != nil
         outlineButton.isSelected = style.outline != nil
-        backgroundButton.isSelected = style.backgroundFill != nil
 
-        [italicButton, shadowButton, outlineButton, backgroundButton].forEach(updateToggleButtonAppearance)
+        [italicButton, shadowButton, outlineButton].forEach(updateToggleButtonAppearance)
 
         fontSizeRow.value = style.fontSize
         letterSpacingRow.value = style.letterSpacing
         lineSpacingRow.value = style.lineSpacing
         opacityRow.value = style.opacity
-        updatePaletteSelection(selected: style.foregroundColor)
+        textColorStripView.applySelection(color: style.foregroundColor)
+        backgroundColorStripView.applySelection(color: style.backgroundFill?.color)
 
         let isEmoji = node.kind == .emoji
-        fontButton.isHidden = isEmoji
-        weightControl.isHidden = isEmoji
-        alignmentControl.isHidden = isEmoji
-    }
-
-    private func rebuildFontMenu() {
-        fontButton.menu = UIMenu(children: fontFamilies.map { fontName in
-            UIAction(title: fontName) { [weak self] _ in
-                guard let self else { return }
-                self.fontButton.configuration?.title = fontName
-                self.delegate?.textInspectorView(self, didSelectFontFamily: fontName)
-            }
-        })
-    }
-
-    private func rebuildPalette() {
-        colorStack.arrangedSubviews.forEach {
-            colorStack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-
-        palette.enumerated().forEach { index, color in
-            let button = UIButton(type: .system)
-            button.tag = index
-            button.backgroundColor = color.uiColor
-            button.layer.cornerRadius = 16
-            button.layer.borderWidth = 2
-            button.layer.borderColor = UIColor.clear.cgColor
-            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
-            button.addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                self.updatePaletteSelection(selected: color)
-                self.delegate?.textInspectorView(self, didSelectColor: color)
-            }, for: .touchUpInside)
-            colorStack.addArrangedSubview(button)
-        }
-    }
-
-    private func updatePaletteSelection(selected: CanvasColor) {
-        for (index, subview) in colorStack.arrangedSubviews.enumerated() {
-            guard let button = subview as? UIButton else {
-                continue
-            }
-            button.layer.borderColor = palette[index] == selected ? UIColor.white.cgColor : UIColor.clear.cgColor
-        }
+        fontSectionView.isHidden = isEmoji
+        alignmentSectionView.isHidden = isEmoji
     }
 
     private func section(title: String, view: UIView) -> UIView {
@@ -259,26 +241,6 @@ final class CanvasTextInspectorView: UIView {
         button.configuration?.background.strokeColor = button.isSelected ? .clear : UIColor.white.withAlphaComponent(0.2)
     }
 
-    private func didChangeWeight() {
-        guard !isApplyingState else {
-            return
-        }
-        let weight: CanvasFontWeight
-        switch weightControl.selectedSegmentIndex {
-        case 0:
-            weight = .regular
-        case 1:
-            weight = .medium
-        case 2:
-            weight = .semibold
-        case 4:
-            weight = .heavy
-        default:
-            weight = .bold
-        }
-        delegate?.textInspectorView(self, didSelectWeight: weight)
-    }
-
     private func didChangeAlignment() {
         guard !isApplyingState else {
             return
@@ -295,22 +257,351 @@ final class CanvasTextInspectorView: UIView {
         delegate?.textInspectorView(self, didSelectAlignment: alignment)
     }
 
-    private func index(for weight: CanvasFontWeight) -> Int {
-        switch weight {
-        case .regular: 0
-        case .medium: 1
-        case .semibold: 2
-        case .bold: 3
-        case .heavy: 4
-        }
-    }
-
     private func index(for alignment: CanvasTextAlignment) -> Int {
         switch alignment {
         case .leading: 0
         case .center: 1
         case .trailing: 2
         }
+    }
+}
+
+private final class InspectorFontFamilyStripView: UIView {
+    var onSelectFontFamily: ((String) -> Void)?
+
+    private let scrollView = UIScrollView()
+    private let stackView = UIStackView()
+    private var buttons: [String: UIButton] = [:]
+    private var displayedFontFamilies: [String] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+
+        stackView.axis = .horizontal
+        stackView.spacing = 10
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(fontFamilies: [String]) {
+        guard displayedFontFamilies != fontFamilies else {
+            return
+        }
+        displayedFontFamilies = fontFamilies
+        rebuildButtons()
+    }
+
+    func setSelectedFontFamily(_ fontFamily: String) {
+        buttons.forEach { family, button in
+            let isSelected = family == fontFamily
+            button.backgroundColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.08)
+            button.layer.borderColor = isSelected ? UIColor.clear.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
+            button.setTitleColor(isSelected ? .black : .white, for: .normal)
+        }
+    }
+
+    private func rebuildButtons() {
+        buttons.removeAll()
+        stackView.arrangedSubviews.forEach {
+            stackView.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        displayedFontFamilies.forEach { fontFamily in
+            let button = UIButton(type: .custom)
+            let font = UIFont(name: fontFamily, size: 15) ?? UIFont.systemFont(ofSize: 15, weight: .medium)
+            let titleWidth = ceil((fontFamily as NSString).size(withAttributes: [.font: font]).width) + 32
+            button.setTitle(fontFamily, for: .normal)
+            button.setTitleColor(.white, for: .normal)
+            button.titleLabel?.font = font
+            button.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+            button.layer.cornerRadius = 18
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
+            button.heightAnchor.constraint(equalToConstant: 38).isActive = true
+            button.widthAnchor.constraint(equalToConstant: titleWidth).isActive = true
+            button.addAction(UIAction { [weak self] _ in
+                self?.setSelectedFontFamily(fontFamily)
+                self?.onSelectFontFamily?(fontFamily)
+            }, for: .touchUpInside)
+            buttons[fontFamily] = button
+            stackView.addArrangedSubview(button)
+        }
+    }
+}
+
+private final class InspectorColorStripView: UIView {
+    var onSelectColor: ((CanvasColor) -> Void)?
+    var onSelectClear: (() -> Void)?
+    var onRequestPicker: (() -> Void)?
+
+    private let target: CanvasTextInspectorColorTarget
+    private let showsClearChip: Bool
+    private let scrollView = UIScrollView()
+    private let stackView = UIStackView()
+    private let pickerButton = InspectorColorChipButton()
+    private let clearButton = InspectorColorChipButton()
+    private var paletteButtons: [CanvasColor: InspectorColorChipButton] = [:]
+    private var palette: [CanvasColor] = []
+    private var customColor: CanvasColor?
+    private var selectedColor: CanvasColor?
+
+    init(target: CanvasTextInspectorColorTarget, showsClearChip: Bool) {
+        self.target = target
+        self.showsClearChip = showsClearChip
+        super.init(frame: .zero)
+
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scrollView)
+
+        stackView.axis = .horizontal
+        stackView.spacing = 12
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+
+        pickerButton.configure(kind: .picker)
+        pickerButton.accessibilityLabel = target == .foreground ? "Pick text color" : "Pick background color"
+        pickerButton.addAction(UIAction { [weak self] _ in
+            self?.onRequestPicker?()
+        }, for: .touchUpInside)
+
+        clearButton.configure(kind: .clear)
+        clearButton.accessibilityLabel = "Clear background"
+        clearButton.addAction(UIAction { [weak self] _ in
+            self?.applySelection(color: nil)
+            self?.onSelectClear?()
+        }, for: .touchUpInside)
+
+        rebuildButtons()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(palette: [CanvasColor]) {
+        guard self.palette != palette else {
+            return
+        }
+        self.palette = palette
+        rebuildButtons()
+    }
+
+    func applySelection(color: CanvasColor?) {
+        selectedColor = color
+        customColor = nil
+
+        if let color {
+            if !palette.contains(color) {
+                customColor = color
+            }
+            pickerButton.setDisplayedColor(customColor?.uiColor)
+        } else {
+            pickerButton.setDisplayedColor(nil)
+        }
+
+        if showsClearChip {
+            clearButton.isSelected = color == nil
+        }
+        pickerButton.isSelected = color != nil && customColor != nil
+
+        for (paletteColor, button) in paletteButtons {
+            button.isSelected = paletteColor == color
+        }
+    }
+
+    private func rebuildButtons() {
+        paletteButtons.removeAll()
+        stackView.arrangedSubviews.forEach {
+            stackView.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        if showsClearChip {
+            stackView.addArrangedSubview(clearButton)
+        }
+        stackView.addArrangedSubview(pickerButton)
+
+        palette.forEach { color in
+            let button = InspectorColorChipButton()
+            button.configure(kind: .color(color.uiColor))
+            button.accessibilityLabel = target == .foreground ? "Text color" : "Background color"
+            button.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+
+                if self.showsClearChip, self.selectedColor == color {
+                    self.applySelection(color: nil)
+                    self.onSelectClear?()
+                    return
+                }
+
+                self.applySelection(color: color)
+                self.onSelectColor?(color)
+            }, for: .touchUpInside)
+            paletteButtons[color] = button
+            stackView.addArrangedSubview(button)
+        }
+    }
+}
+
+private final class InspectorColorChipButton: UIButton {
+    enum Kind {
+        case color(UIColor)
+        case clear
+        case picker
+    }
+
+    private let ringView = UIView()
+    private let swatchView = UIView()
+    private let iconView = UIImageView()
+    private var kind: Kind = .picker
+    private var displayedColor: UIColor?
+
+    override var isSelected: Bool {
+        didSet {
+            updateAppearance()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = .clear
+
+        ringView.translatesAutoresizingMaskIntoConstraints = false
+        ringView.isUserInteractionEnabled = false
+        ringView.layer.cornerRadius = 22
+        ringView.layer.borderWidth = 1.5
+        addSubview(ringView)
+
+        swatchView.translatesAutoresizingMaskIntoConstraints = false
+        swatchView.isUserInteractionEnabled = false
+        swatchView.layer.cornerRadius = 17
+        addSubview(swatchView)
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.contentMode = .scaleAspectFit
+        iconView.isUserInteractionEnabled = false
+        addSubview(iconView)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 44),
+            heightAnchor.constraint(equalToConstant: 44),
+
+            ringView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            ringView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ringView.topAnchor.constraint(equalTo: topAnchor),
+            ringView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            swatchView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            swatchView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            swatchView.widthAnchor.constraint(equalToConstant: 34),
+            swatchView.heightAnchor.constraint(equalToConstant: 34),
+
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(kind: Kind) {
+        self.kind = kind
+        updateAppearance()
+    }
+
+    func setDisplayedColor(_ color: UIColor?) {
+        displayedColor = color
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        switch kind {
+        case .color(let color):
+            swatchView.backgroundColor = color
+            ringView.backgroundColor = .clear
+            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.clear.cgColor
+            iconView.image = isSelected ? UIImage(systemName: "checkmark") : nil
+            iconView.tintColor = color.isLightColor ? .black : .white
+
+        case .clear:
+            swatchView.backgroundColor = UIColor.white.withAlphaComponent(0.96)
+            ringView.backgroundColor = UIColor.white.withAlphaComponent(isSelected ? 0.12 : 0.04)
+            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
+            iconView.image = isSelected ? UIImage(systemName: "checkmark.circle.fill") : UIImage(systemName: "circle")
+            iconView.tintColor = isSelected ? UIColor(red: 0.28, green: 0.51, blue: 1, alpha: 1) : UIColor.black.withAlphaComponent(0.36)
+
+        case .picker:
+            let resolvedColor = displayedColor ?? UIColor.white.withAlphaComponent(0.08)
+            swatchView.backgroundColor = resolvedColor
+            ringView.backgroundColor = UIColor.white.withAlphaComponent(isSelected ? 0.08 : 0.02)
+            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
+            iconView.image = UIImage(systemName: displayedColor == nil ? "eyedropper.halffull" : "eyedropper.full")
+            iconView.tintColor = displayedColor?.isLightColor == true ? .black : .white
+        }
+    }
+}
+
+private extension UIColor {
+    var isLightColor: Bool {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        if getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            let luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+            return luminance > 0.68
+        }
+
+        let fallback = CIColor(color: self)
+        let luminance = (0.299 * fallback.red) + (0.587 * fallback.green) + (0.114 * fallback.blue)
+        return luminance > 0.68
     }
 }
 

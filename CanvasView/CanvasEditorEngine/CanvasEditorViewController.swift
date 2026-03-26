@@ -48,7 +48,7 @@ private enum VisibleInspectorKind {
     case brush
 }
 
-final class CanvasEditorViewController: UIViewController, CanvasTextInspectorViewDelegate, CanvasBrushInspectorViewDelegate, PHPickerViewControllerDelegate, CanvasStageViewDelegate, CanvasLayerPanelViewDelegate {
+final class CanvasEditorViewController: UIViewController, CanvasTextInspectorViewDelegate, CanvasBrushInspectorViewDelegate, PHPickerViewControllerDelegate, UIColorPickerViewControllerDelegate, CanvasStageViewDelegate, CanvasLayerPanelViewDelegate {
     weak var delegate: CanvasEditorViewControllerDelegate?
 
     let store: CanvasEditorStore
@@ -79,6 +79,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private var isLayerPanelVisible = false
     private var lastSelectedNodeID: String?
     private var loadingState: CanvasEditorLoadingState = .none
+    private var activeTextColorPickerTarget: CanvasTextInspectorColorTarget?
     private var brushConfiguration = CanvasBrushConfiguration.defaultValue {
         didSet {
             guard isViewLoaded else {
@@ -611,6 +612,47 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         stageView.ensureSelectedTextFitsHeight()
     }
 
+    private func presentTextColorPicker(for target: CanvasTextInspectorColorTarget) {
+        guard let node = store.selectedNode, node.kind == .text || node.kind == .emoji else {
+            return
+        }
+
+        let style = node.style ?? (node.kind == .emoji ? .defaultEmoji : .defaultText)
+        let picker = UIColorPickerViewController()
+        picker.delegate = self
+        picker.supportsAlpha = true
+        picker.selectedColor = {
+            switch target {
+            case .foreground:
+                return style.foregroundColor.uiColor
+            case .background:
+                return style.backgroundFill?.color.uiColor ?? .clear
+            }
+        }()
+
+        activeTextColorPickerTarget = target
+        present(picker, animated: true)
+    }
+
+    private func applySelectedPickerColor(_ color: UIColor, for target: CanvasTextInspectorColorTarget) {
+        let canvasColor = CanvasColor(uiColor: color)
+
+        switch target {
+        case .foreground:
+            applyTextStyleMutation { $0.foregroundColor = canvasColor }
+
+        case .background:
+            applyTextStyleMutation {
+                if canvasColor.alpha <= 0.001 {
+                    $0.backgroundFill = nil
+                    $0.shadow = nil
+                } else {
+                    $0.backgroundFill = CanvasFillStyle(color: canvasColor)
+                }
+            }
+        }
+    }
+
     private func presentEmojiPrompt() {
         let picker = CanvasInsertPickerSheetViewController(
             mode: .emoji,
@@ -791,16 +833,35 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         applyTextStyleMutation { $0.fontFamily = fontFamily }
     }
 
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectWeight weight: CanvasFontWeight) {
-        applyTextStyleMutation { $0.weight = weight }
-    }
-
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectAlignment alignment: CanvasTextAlignment) {
         applyTextStyleMutation { $0.alignment = alignment }
     }
 
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectColor color: CanvasColor) {
-        applyTextStyleMutation { $0.foregroundColor = color }
+    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectColor color: CanvasColor, for target: CanvasTextInspectorColorTarget) {
+        switch target {
+        case .foreground:
+            applyTextStyleMutation { $0.foregroundColor = color }
+        case .background:
+            applyTextStyleMutation {
+                if color.alpha <= 0.001 {
+                    $0.backgroundFill = nil
+                    $0.shadow = nil
+                } else {
+                    $0.backgroundFill = CanvasFillStyle(color: color)
+                }
+            }
+        }
+    }
+
+    func textInspectorViewDidSelectClearBackground(_ textInspectorView: CanvasTextInspectorView) {
+        applyTextStyleMutation {
+            $0.backgroundFill = nil
+            $0.shadow = nil
+        }
+    }
+
+    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didRequestColorPickerFor target: CanvasTextInspectorColorTarget) {
+        presentTextColorPicker(for: target)
     }
 
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetItalic isItalic: Bool) {
@@ -819,12 +880,6 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         }
     }
 
-    func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSetBackgroundFill isEnabled: Bool) {
-        applyTextStyleMutation {
-            $0.backgroundFill = isEnabled ? CanvasFillStyle(color: .black) : nil
-        }
-    }
-
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didChangeFontSize value: Double) {
         applyTextStyleMutation { $0.fontSize = value }
     }
@@ -839,6 +894,17 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didChangeOpacity value: Double) {
         applyTextStyleMutation { $0.opacity = value }
+    }
+
+    func colorPickerViewControllerDidSelectColor(_ viewController: UIColorPickerViewController) {
+        guard let activeTextColorPickerTarget else {
+            return
+        }
+        applySelectedPickerColor(viewController.selectedColor, for: activeTextColorPickerTarget)
+    }
+
+    func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
+        activeTextColorPickerTarget = nil
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {

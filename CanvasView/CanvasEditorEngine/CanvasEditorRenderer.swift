@@ -65,10 +65,8 @@ enum CanvasEditorRenderer {
         let style = node.style ?? (node.kind == .emoji ? .defaultEmoji : .defaultText)
         let textRect = rect.insetBy(dx: 8, dy: 8)
 
-        if let backgroundFill = style.backgroundFill {
-            backgroundFill.color.uiColor
-                .withAlphaComponent(style.opacity * 0.35)
-                .setFill()
+        if let backgroundColor = style.resolvedBackgroundUIColor {
+            backgroundColor.setFill()
             UIBezierPath(roundedRect: textRect, cornerRadius: 16).fill()
         }
 
