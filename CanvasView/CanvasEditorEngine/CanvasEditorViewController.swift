@@ -39,7 +39,6 @@ private enum CanvasEditorOperationError: Error {
 private enum BrushInspectorMode {
     case create
     case edit
-    case erase
 }
 
 private enum VisibleInspectorKind {
@@ -67,7 +66,8 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private let toolbarTileHeight: CGFloat = 82
     private let historyButtonSize: CGFloat = 50
-    private let inspectorExpandedHeight: CGFloat = 360
+    private let inspectorMaximumHeight: CGFloat = 360
+    private let inspectorMinimumTopMargin: CGFloat = 44
     private let inspectorVisibleOffset: CGFloat = 0
     private var inspectorBottomConstraint: NSLayoutConstraint?
     private var inspectorHeightConstraint: NSLayoutConstraint?
@@ -79,6 +79,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private var isLayerPanelVisible = false
     private var lastSelectedNodeID: String?
     private var loadingState: CanvasEditorLoadingState = .none
+    private var currentVisibleInspectorKind: VisibleInspectorKind = .none
     private var activeTextColorPickerTarget: CanvasTextInspectorColorTarget?
     private var brushConfiguration = CanvasBrushConfiguration.defaultValue {
         didSet {
@@ -89,6 +90,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         }
     }
     private var eraserStrokeWidth: Double = 24
+    private var isEraserModeEnabled = false
 
     private var projectObserverID: UUID?
     private var selectionObserverID: UUID?
@@ -175,6 +177,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         setupToolbar()
         bindStore()
         updateBrushButtonAppearance()
+        updateEraserButtonAppearance()
         updateInspectorMetrics()
     }
 
@@ -221,9 +224,9 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
         inspectorBottomConstraint = inspectorContainerView.bottomAnchor.constraint(
             equalTo: view.bottomAnchor,
-            constant: inspectorExpandedHeight + 40
+            constant: inspectorMaximumHeight + 40
         )
-        inspectorHeightConstraint = inspectorContainerView.heightAnchor.constraint(equalToConstant: inspectorExpandedHeight + view.safeAreaInsets.bottom)
+        inspectorHeightConstraint = inspectorContainerView.heightAnchor.constraint(equalToConstant: inspectorMaximumHeight + view.safeAreaInsets.bottom)
         layerPanelHeightConstraint = layerPanelView.heightAnchor.constraint(equalToConstant: 180)
         inspectorBottomConstraint?.isActive = true
         inspectorHeightConstraint?.isActive = true
@@ -356,6 +359,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         undoButton.isEnabled = store.canUndo
         redoButton.isEnabled = store.canRedo
         updateLayerButtonAppearance()
+        updateEraserButtonAppearance()
         updateVisibleInspector(animated: true)
     }
 
@@ -381,13 +385,33 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateInspectorMetrics()
         updateLayerPanelHeight()
     }
 
     private func updateInspectorMetrics() {
-        let totalHeight = inspectorExpandedHeight + view.safeAreaInsets.bottom
+        let totalHeight = currentInspectorHeight()
         inspectorHeightConstraint?.constant = totalHeight
         inspectorBottomConstraint?.constant = isInspectorVisible ? inspectorVisibleOffset : totalHeight + 20
+    }
+
+    private func currentInspectorHeight() -> CGFloat {
+        let maximumContentHeight = min(
+            inspectorMaximumHeight,
+            max(view.bounds.height - view.safeAreaInsets.top - inspectorMinimumTopMargin - view.safeAreaInsets.bottom, 0)
+        )
+
+        let contentHeight: CGFloat
+        switch currentVisibleInspectorKind {
+        case .text:
+            contentHeight = textInspectorView.preferredHeight(for: view.bounds.width, maximumHeight: maximumContentHeight)
+        case .brush:
+            contentHeight = brushInspectorView.preferredHeight(for: view.bounds.width, maximumHeight: maximumContentHeight)
+        case .none:
+            contentHeight = maximumContentHeight
+        }
+
+        return contentHeight + view.safeAreaInsets.bottom
     }
 
     private func setLoadingState(_ state: CanvasEditorLoadingState, animated: Bool = true) {
@@ -404,7 +428,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
         if isBusy {
             setLayerPanelVisible(false, animated: animated)
-            stageView.cancelDrawingMode()
+            cancelActiveToolMode()
         }
 
         if isBusy {
@@ -455,8 +479,6 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
                     return .none
                 }
                 return .brush
-            case .erase:
-                return .brush
             }
         }
 
@@ -471,6 +493,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func updateVisibleInspector(animated: Bool) {
         let visibleInspectorKind = resolvedVisibleInspectorKind()
+        currentVisibleInspectorKind = visibleInspectorKind
         textInspectorView.isHidden = visibleInspectorKind != .text
         brushInspectorView.isHidden = visibleInspectorKind != .brush
         setInspectorVisible(visibleInspectorKind != .none, animated: animated)
@@ -571,6 +594,16 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         addBrushButton.configuration = configuration
     }
 
+    private func updateEraserButtonAppearance() {
+        guard var configuration = eraserButton.configuration else {
+            return
+        }
+
+        configuration.baseForegroundColor = isEraserModeEnabled ? .black : .white
+        configuration.baseBackgroundColor = isEraserModeEnabled ? .white : UIColor.white.withAlphaComponent(0.08)
+        eraserButton.configuration = configuration
+    }
+
     private func makeHistoryButton(title: String, systemImage: String) -> UIButton {
         let button = UIButton(type: .system)
         var configuration = UIButton.Configuration.filled()
@@ -595,16 +628,42 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func dismissEditingOverlays(animated: Bool) {
         dismissInspector(animated: animated)
-        stageView.cancelDrawingMode()
+        cancelActiveToolMode()
     }
 
     private func presentBrushInspector(mode: BrushInspectorMode, configuration: CanvasBrushConfiguration) {
         isInspectorRequested = false
         brushInspectorMode = mode
         brushConfiguration = configuration
-        let inspectorMode: CanvasBrushInspectorMode = mode == .erase ? .eraser : .brush
-        brushInspectorView.apply(configuration: configuration, mode: inspectorMode)
+        brushInspectorView.apply(configuration: configuration)
         updateVisibleInspector(animated: true)
+    }
+
+    private func setEraserModeEnabled(_ enabled: Bool, animated: Bool) {
+        guard enabled != isEraserModeEnabled else {
+            return
+        }
+
+        if enabled {
+            cancelActiveToolMode()
+            dismissInspector(animated: animated)
+            isEraserModeEnabled = true
+            updateEraserButtonAppearance()
+            store.selectNode(nil)
+            stageView.beginErasing(strokeWidth: eraserStrokeWidth)
+        } else {
+            cancelActiveToolMode()
+        }
+    }
+
+    private func cancelActiveToolMode() {
+        stageView.cancelDrawingMode()
+        guard isEraserModeEnabled else {
+            return
+        }
+
+        isEraserModeEnabled = false
+        updateEraserButtonAppearance()
     }
 
     private func applyTextStyleMutation(_ mutation: (inout CanvasTextStyle) -> Void) {
@@ -621,34 +680,53 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         let picker = UIColorPickerViewController()
         picker.delegate = self
         picker.supportsAlpha = true
-        picker.selectedColor = {
-            switch target {
-            case .foreground:
-                return style.foregroundColor.uiColor
-            case .background:
-                return style.backgroundFill?.color.uiColor ?? .clear
-            }
-        }()
+        picker.selectedColor = selectedColor(for: target, in: style)
 
         activeTextColorPickerTarget = target
         present(picker, animated: true)
     }
 
     private func applySelectedPickerColor(_ color: UIColor, for target: CanvasTextInspectorColorTarget) {
-        let canvasColor = CanvasColor(uiColor: color)
+        applyTextColorSelection(CanvasColor(uiColor: color), for: target)
+    }
 
+    private func selectedColor(for target: CanvasTextInspectorColorTarget, in style: CanvasTextStyle) -> UIColor {
         switch target {
         case .foreground:
-            applyTextStyleMutation { $0.foregroundColor = canvasColor }
+            return style.foregroundColor.uiColor
+        case .background:
+            return style.backgroundFill?.color.uiColor ?? .clear
+        case .shadow:
+            return style.shadow?.color.uiColor ?? .black
+        case .outline:
+            return style.outline?.color.uiColor ?? .black
+        }
+    }
 
+    private func applyTextColorSelection(_ color: CanvasColor, for target: CanvasTextInspectorColorTarget) {
+        switch target {
+        case .foreground:
+            applyTextStyleMutation { $0.foregroundColor = color }
         case .background:
             applyTextStyleMutation {
-                if canvasColor.alpha <= 0.001 {
+                if color.alpha <= 0.001 {
                     $0.backgroundFill = nil
                     $0.shadow = nil
                 } else {
-                    $0.backgroundFill = CanvasFillStyle(color: canvasColor)
+                    $0.backgroundFill = CanvasFillStyle(color: color)
                 }
+            }
+        case .shadow:
+            applyTextStyleMutation {
+                guard var shadow = $0.shadow else { return }
+                shadow.color = color
+                $0.shadow = shadow
+            }
+        case .outline:
+            applyTextStyleMutation {
+                guard var outline = $0.outline else { return }
+                outline.color = color
+                $0.outline = outline
             }
         }
     }
@@ -727,12 +805,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didChange configuration: CanvasBrushConfiguration) {
-        switch brushInspectorMode {
-        case .erase:
-            eraserStrokeWidth = configuration.strokeWidth
-        default:
-            brushConfiguration = configuration
-        }
+        brushConfiguration = configuration
     }
 
     func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didConfirm configuration: CanvasBrushConfiguration) {
@@ -753,12 +826,6 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             )
             dismissInspector(animated: true)
 
-        case .erase:
-            eraserStrokeWidth = configuration.strokeWidth
-            dismissInspector(animated: true)
-            store.selectNode(nil)
-            stageView.beginErasing(strokeWidth: configuration.strokeWidth)
-
         case .none:
             dismissInspector(animated: true)
         }
@@ -768,7 +835,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         guard let node = store.selectedNode, node.kind == .text || node.kind == .emoji, !isInlineEditingText else {
             return
         }
-        stageView.cancelDrawingMode()
+        cancelActiveToolMode()
         brushInspectorMode = nil
         isInspectorRequested.toggle()
         refreshChrome()
@@ -838,19 +905,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     func textInspectorView(_ textInspectorView: CanvasTextInspectorView, didSelectColor color: CanvasColor, for target: CanvasTextInspectorColorTarget) {
-        switch target {
-        case .foreground:
-            applyTextStyleMutation { $0.foregroundColor = color }
-        case .background:
-            applyTextStyleMutation {
-                if color.alpha <= 0.001 {
-                    $0.backgroundFill = nil
-                    $0.shadow = nil
-                } else {
-                    $0.backgroundFill = CanvasFillStyle(color: color)
-                }
-            }
-        }
+        applyTextColorSelection(color, for: target)
     }
 
     func textInspectorViewDidSelectClearBackground(_ textInspectorView: CanvasTextInspectorView) {
@@ -1031,19 +1086,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     @objc
     private func eraserTapped() {
-        stageView.cancelDrawingMode()
-        let configuration = CanvasBrushConfiguration(
-            type: .brush,
-            strokeWidth: eraserStrokeWidth,
-            opacity: 1,
-            color: .white
-        )
-        presentBrushInspector(mode: .erase, configuration: configuration)
+        setEraserModeEnabled(!isEraserModeEnabled, animated: true)
     }
 
     @objc
     private func addBrushTapped() {
-        stageView.cancelDrawingMode()
+        cancelActiveToolMode()
         presentBrushInspector(mode: .create, configuration: brushConfiguration)
     }
 
@@ -1061,13 +1109,13 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     @objc
     private func undoTapped() {
-        stageView.cancelDrawingMode()
+        cancelActiveToolMode()
         store.undo()
     }
 
     @objc
     private func redoTapped() {
-        stageView.cancelDrawingMode()
+        cancelActiveToolMode()
         store.redo()
     }
 }

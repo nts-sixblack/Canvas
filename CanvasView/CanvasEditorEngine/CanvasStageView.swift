@@ -292,9 +292,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     func beginDrawing(with configuration: CanvasBrushConfiguration) {
         endInlineEditing()
         toolMode = .drawing(configuration)
-        toolPoints.removeAll()
-        toolStartPoint = nil
-        drawingPreviewLayer.path = nil
+        resetCurrentToolStrokePreview()
         drawingPreviewView.isHidden = false
         drawingPreviewLayer.isHidden = false
         setNodeGesturesEnabled(false)
@@ -307,9 +305,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
     func beginErasing(strokeWidth: Double) {
         endInlineEditing()
         toolMode = .erasing(strokeWidth: strokeWidth)
-        toolPoints.removeAll()
-        toolStartPoint = nil
-        drawingPreviewLayer.path = nil
+        resetCurrentToolStrokePreview()
         drawingPreviewLayer.strokeColor = UIColor.white.withAlphaComponent(0.92).cgColor
         drawingPreviewLayer.lineWidth = strokeWidth
         drawingPreviewView.isHidden = false
@@ -323,9 +319,7 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
 
     func cancelDrawingMode() {
         toolMode = nil
-        toolPoints.removeAll()
-        toolStartPoint = nil
-        drawingPreviewLayer.path = nil
+        resetCurrentToolStrokePreview()
         drawingPreviewLayer.isHidden = true
         drawingPreviewView.isHidden = true
         drawingPanGestureRecognizer.isEnabled = false
@@ -684,15 +678,24 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
                 if let draft = currentShapeDraft(using: configuration) {
                     delegate?.canvasStageView(self, didFinishDrawing: draft)
                 }
+                cancelDrawingMode()
             case .erasing(let strokeWidth):
                 if let stroke = currentEraserStroke(strokeWidth: strokeWidth) {
                     delegate?.canvasStageView(self, didFinishErasing: stroke)
                 }
+                resetCurrentToolStrokePreview()
             }
-            cancelDrawingMode()
+
+        case .cancelled, .failed:
+            switch toolMode {
+            case .drawing:
+                cancelDrawingMode()
+            case .erasing:
+                resetCurrentToolStrokePreview()
+            }
 
         default:
-            cancelDrawingMode()
+            break
         }
     }
 
@@ -707,6 +710,13 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         panGestureRecognizer.isEnabled = enabled
         pinchGestureRecognizer.isEnabled = enabled
         rotationGestureRecognizer.isEnabled = enabled
+    }
+
+    private func resetCurrentToolStrokePreview() {
+        toolPoints.removeAll()
+        toolStartPoint = nil
+        drawingPreviewLayer.path = nil
+        drawingPreviewLayer.isHidden = true
     }
 
     private func clampedCanvasPoint(_ point: CGPoint) -> CGPoint {

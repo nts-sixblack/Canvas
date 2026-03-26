@@ -137,22 +137,47 @@ public struct CanvasEraserStroke: Codable, Hashable, Sendable {
     }
 }
 
-public enum CanvasEraserPathBuilder {
-    public static func makePath(points: [CGPoint]) -> CGPath {
+enum CanvasFreehandPathBuilder {
+    static func makePath(points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
         guard let first = points.first else {
             return path
         }
 
         path.move(to: first)
-        if points.count == 1 {
+
+        switch points.count {
+        case 1:
             path.addLine(to: first)
-        } else {
-            for point in points.dropFirst() {
-                path.addLine(to: point)
+        case 2:
+            path.addLine(to: points[1])
+        default:
+            for index in 1..<(points.count - 1) {
+                let current = points[index]
+                let next = points[index + 1]
+                path.addQuadCurve(to: midpoint(from: current, to: next), control: current)
             }
+
+            path.addQuadCurve(
+                to: points[points.count - 1],
+                control: points[points.count - 2]
+            )
         }
+
         return path
+    }
+
+    private static func midpoint(from start: CGPoint, to end: CGPoint) -> CGPoint {
+        CGPoint(
+            x: (start.x + end.x) / 2,
+            y: (start.y + end.y) / 2
+        )
+    }
+}
+
+public enum CanvasEraserPathBuilder {
+    public static func makePath(points: [CGPoint]) -> CGPath {
+        CanvasFreehandPathBuilder.makePath(points: points)
     }
 
     public static func makePath(for stroke: CanvasEraserStroke) -> CGPath {

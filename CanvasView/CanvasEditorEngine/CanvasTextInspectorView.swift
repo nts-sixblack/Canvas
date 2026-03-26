@@ -3,6 +3,8 @@ import UIKit
 enum CanvasTextInspectorColorTarget {
     case foreground
     case background
+    case shadow
+    case outline
 }
 
 protocol CanvasTextInspectorViewDelegate: AnyObject {
@@ -22,6 +24,11 @@ protocol CanvasTextInspectorViewDelegate: AnyObject {
 }
 
 final class CanvasTextInspectorView: UIView {
+    private enum Layout {
+        static let horizontalInset: CGFloat = 18
+        static let verticalInset: CGFloat = 14
+    }
+
     weak var delegate: CanvasTextInspectorViewDelegate?
 
     private let scrollView = UIScrollView()
@@ -35,6 +42,8 @@ final class CanvasTextInspectorView: UIView {
     private let outlineButton = UIButton(type: .system)
     private let textColorStripView = InspectorColorStripView(target: .foreground, showsClearChip: false)
     private let backgroundColorStripView = InspectorColorStripView(target: .background, showsClearChip: true)
+    private let shadowColorStripView = InspectorColorStripView(target: .shadow, showsClearChip: false)
+    private let outlineColorStripView = InspectorColorStripView(target: .outline, showsClearChip: false)
 
     private let fontSizeRow = InspectorSliderRow(title: "Font Size", range: 16...120)
     private let letterSpacingRow = InspectorSliderRow(title: "Letter Space", range: -4...24)
@@ -46,6 +55,8 @@ final class CanvasTextInspectorView: UIView {
     private lazy var styleSectionView = section(title: "Style", view: toggleStack)
     private lazy var textColorSectionView = section(title: "Text Color", view: textColorStripView)
     private lazy var backgroundSectionView = section(title: "Background", view: backgroundColorStripView)
+    private lazy var shadowColorSectionView = section(title: "Shadow Color", view: shadowColorStripView)
+    private lazy var outlineColorSectionView = section(title: "Outline Color", view: outlineColorStripView)
     private lazy var toggleStack: UIStackView = {
         let stack = UIStackView(arrangedSubviews: [italicButton, shadowButton, outlineButton])
         stack.axis = .horizontal
@@ -64,11 +75,26 @@ final class CanvasTextInspectorView: UIView {
         layer.cornerRadius = 28
 
         scrollView.showsVerticalScrollIndicator = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
         contentStack.axis = .vertical
         contentStack.spacing = 16
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Layout.horizontalInset),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Layout.horizontalInset),
+            scrollView.topAnchor.constraint(equalTo: topAnchor, constant: Layout.verticalInset),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Layout.verticalInset),
+
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        ])
 
         titleLabel.text = "Text Inspector"
         titleLabel.font = UIFont.systemFont(ofSize: 18, weight: .bold)
@@ -136,6 +162,26 @@ final class CanvasTextInspectorView: UIView {
         }
         contentStack.addArrangedSubview(backgroundSectionView)
 
+        shadowColorStripView.onSelectColor = { [weak self] color in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorView(self, didSelectColor: color, for: .shadow)
+        }
+        shadowColorStripView.onRequestPicker = { [weak self] in
+            guard let self else { return }
+            self.delegate?.textInspectorView(self, didRequestColorPickerFor: .shadow)
+        }
+        contentStack.addArrangedSubview(shadowColorSectionView)
+
+        outlineColorStripView.onSelectColor = { [weak self] color in
+            guard let self, !self.isApplyingState else { return }
+            self.delegate?.textInspectorView(self, didSelectColor: color, for: .outline)
+        }
+        outlineColorStripView.onRequestPicker = { [weak self] in
+            guard let self else { return }
+            self.delegate?.textInspectorView(self, didRequestColorPickerFor: .outline)
+        }
+        contentStack.addArrangedSubview(outlineColorSectionView)
+
         [fontSizeRow, letterSpacingRow, lineSpacingRow, opacityRow].forEach { row in
             row.onChange = { [weak self, weak row] value in
                 guard let self, let row, !self.isApplyingState else { return }
@@ -161,15 +207,12 @@ final class CanvasTextInspectorView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        scrollView.frame = bounds.insetBy(dx: 18, dy: 14)
-        contentStack.frame = CGRect(origin: .zero, size: CGSize(width: scrollView.bounds.width, height: contentStack.systemLayoutSizeFitting(
-            CGSize(width: scrollView.bounds.width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height))
-        scrollView.contentSize = contentStack.bounds.size
+    func preferredHeight(for width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
+        let contentWidth = max(width - (Layout.horizontalInset * 2), 1)
+        invalidateContentLayout()
+        layoutIfNeeded()
+        let contentHeight = measuredContentHeight(for: contentWidth)
+        return min(maximumHeight, contentHeight + (Layout.verticalInset * 2))
     }
 
     func configure(fontFamilies: [String], palette: [CanvasColor]) {
@@ -178,6 +221,8 @@ final class CanvasTextInspectorView: UIView {
         fontFamilyStripView.configure(fontFamilies: fontFamilies)
         textColorStripView.configure(palette: palette)
         backgroundColorStripView.configure(palette: palette)
+        shadowColorStripView.configure(palette: palette)
+        outlineColorStripView.configure(palette: palette)
     }
 
     func apply(node: CanvasNode) {
@@ -206,10 +251,15 @@ final class CanvasTextInspectorView: UIView {
         opacityRow.value = style.opacity
         textColorStripView.applySelection(color: style.foregroundColor)
         backgroundColorStripView.applySelection(color: style.backgroundFill?.color)
+        shadowColorStripView.applySelection(color: style.shadow?.color)
+        outlineColorStripView.applySelection(color: style.outline?.color)
+        shadowColorSectionView.isHidden = style.shadow == nil
+        outlineColorSectionView.isHidden = style.outline == nil
 
         let isEmoji = node.kind == .emoji
         fontSectionView.isHidden = isEmoji
         alignmentSectionView.isHidden = isEmoji
+        invalidateContentLayout()
     }
 
     private func section(title: String, view: UIView) -> UIView {
@@ -222,6 +272,20 @@ final class CanvasTextInspectorView: UIView {
         stack.axis = .vertical
         stack.spacing = 8
         return stack
+    }
+
+    private func measuredContentHeight(for width: CGFloat) -> CGFloat {
+        contentStack.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+    }
+
+    private func invalidateContentLayout() {
+        setNeedsLayout()
+        scrollView.setNeedsLayout()
+        contentStack.setNeedsLayout()
     }
 
     private func configureToggleButton(_ button: UIButton, title: String, action: @escaping () -> Void) {
@@ -398,13 +462,13 @@ private final class InspectorColorStripView: UIView {
         ])
 
         pickerButton.configure(kind: .picker)
-        pickerButton.accessibilityLabel = target == .foreground ? "Pick text color" : "Pick background color"
+        pickerButton.accessibilityLabel = target.pickerAccessibilityLabel
         pickerButton.addAction(UIAction { [weak self] _ in
             self?.onRequestPicker?()
         }, for: .touchUpInside)
 
         clearButton.configure(kind: .clear)
-        clearButton.accessibilityLabel = "Clear background"
+        clearButton.accessibilityLabel = target.clearAccessibilityLabel
         clearButton.addAction(UIAction { [weak self] _ in
             self?.applySelection(color: nil)
             self?.onSelectClear?()
@@ -464,7 +528,7 @@ private final class InspectorColorStripView: UIView {
         palette.forEach { color in
             let button = InspectorColorChipButton()
             button.configure(kind: .color(color.uiColor))
-            button.accessibilityLabel = target == .foreground ? "Text color" : "Background color"
+            button.accessibilityLabel = target.paletteAccessibilityLabel
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
 
@@ -479,6 +543,43 @@ private final class InspectorColorStripView: UIView {
             }, for: .touchUpInside)
             paletteButtons[color] = button
             stackView.addArrangedSubview(button)
+        }
+    }
+}
+
+private extension CanvasTextInspectorColorTarget {
+    var pickerAccessibilityLabel: String {
+        switch self {
+        case .foreground:
+            "Pick text color"
+        case .background:
+            "Pick background color"
+        case .shadow:
+            "Pick shadow color"
+        case .outline:
+            "Pick outline color"
+        }
+    }
+
+    var paletteAccessibilityLabel: String {
+        switch self {
+        case .foreground:
+            "Text color"
+        case .background:
+            "Background color"
+        case .shadow:
+            "Shadow color"
+        case .outline:
+            "Outline color"
+        }
+    }
+
+    var clearAccessibilityLabel: String {
+        switch self {
+        case .background:
+            "Clear background"
+        case .foreground, .shadow, .outline:
+            "Clear color"
         }
     }
 }
@@ -672,11 +773,6 @@ protocol CanvasBrushInspectorViewDelegate: AnyObject {
     func canvasBrushInspectorView(_ brushInspectorView: CanvasBrushInspectorView, didConfirm configuration: CanvasBrushConfiguration)
 }
 
-enum CanvasBrushInspectorMode {
-    case brush
-    case eraser
-}
-
 final class CanvasBrushInspectorView: UIView {
     weak var delegate: CanvasBrushInspectorViewDelegate?
 
@@ -697,7 +793,6 @@ final class CanvasBrushInspectorView: UIView {
     private var isApplyingState = false
     private var shapeButtons: [CanvasShapeType: UIButton] = [:]
     private var currentConfiguration = CanvasBrushConfiguration.defaultValue
-    private var inspectorMode: CanvasBrushInspectorMode = .brush
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -751,8 +846,7 @@ final class CanvasBrushInspectorView: UIView {
         apply(configuration: currentConfiguration)
     }
 
-    func apply(configuration: CanvasBrushConfiguration, mode: CanvasBrushInspectorMode = .brush) {
-        inspectorMode = mode
+    func apply(configuration: CanvasBrushConfiguration) {
         currentConfiguration = configuration
         isApplyingState = true
         sizeRow.value = configuration.strokeWidth
@@ -760,7 +854,16 @@ final class CanvasBrushInspectorView: UIView {
         updateShapeSelection(selectedType: configuration.type)
         updatePaletteSelection(selectedColor: configuration.color)
         isApplyingState = false
-        updatePresentation()
+    }
+
+    func preferredHeight(for width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
+        let contentWidth = max(width - 36, 1)
+        let contentHeight = contentStack.systemLayoutSizeFitting(
+            CGSize(width: contentWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        return min(maximumHeight, contentHeight + 36)
     }
 
     private func configureHeader() {
@@ -872,14 +975,6 @@ final class CanvasBrushInspectorView: UIView {
 
     private func notifyConfigurationDidChange() {
         delegate?.canvasBrushInspectorView(self, didChange: currentConfiguration)
-    }
-
-    private func updatePresentation() {
-        let isEraser = inspectorMode == .eraser
-        titleLabel.text = isEraser ? "Eraser" : "Brush"
-        shapeSectionView.isHidden = isEraser
-        opacitySectionView.isHidden = isEraser
-        colorSectionView.isHidden = isEraser
     }
 }
 

@@ -63,17 +63,7 @@ enum CanvasShapePathBuilder {
 
         switch type {
         case .brush:
-            guard let first = points.first else {
-                return path
-            }
-            path.move(to: first)
-            if points.count == 1 {
-                path.addLine(to: first)
-            } else {
-                for point in points.dropFirst() {
-                    path.addLine(to: point)
-                }
-            }
+            path.append(UIBezierPath(cgPath: CanvasFreehandPathBuilder.makePath(points: points)))
 
         case .line:
             guard let first = points.first, let last = points.last else {

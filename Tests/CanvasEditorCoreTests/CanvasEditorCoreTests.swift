@@ -469,17 +469,18 @@ final class CanvasEditorCoreTests: XCTestCase {
             [
                 CanvasEraserStroke(
                     points: [
-                        CanvasPoint(x: 8, y: 32),
-                        CanvasPoint(x: 56, y: 32)
+                        CanvasPoint(x: 8, y: 48),
+                        CanvasPoint(x: 32, y: 16),
+                        CanvasPoint(x: 56, y: 48)
                     ],
-                    strokeWidth: 14
+                    strokeWidth: 24
                 )
             ],
             in: context
         )
 
-        XCTAssertEqual(Self.alpha(in: context, x: 32, y: 32), 0)
-        XCTAssertEqual(Self.alpha(in: context, x: 8, y: 8), 255)
+        XCTAssertEqual(Self.alpha(in: context, x: 32, y: 28), 0)
+        XCTAssertEqual(Self.alpha(in: context, x: 32, y: 0), 255)
     }
 
     func testProjectSummaryDetectsProjectsWithoutInlineImages() {
@@ -490,6 +491,47 @@ final class CanvasEditorCoreTests: XCTestCase {
         XCTAssertEqual(summary.nodeCount, project.nodes.count)
         XCTAssertEqual(summary.canvasSize, project.canvasSize)
         XCTAssertFalse(summary.containsInlineImages)
+    }
+
+    func testFreehandPathBuilderCreatesVisibleDotForSinglePoint() {
+        guard let context = Self.makeBitmapContext(width: 32, height: 32) else {
+            XCTFail("Expected bitmap context")
+            return
+        }
+
+        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.setLineWidth(12)
+        context.addPath(
+            CanvasFreehandPathBuilder.makePath(
+                points: [CGPoint(x: 16, y: 16)]
+            )
+        )
+        context.strokePath()
+
+        XCTAssertEqual(Self.alpha(in: context, x: 16, y: 16), 255)
+        XCTAssertEqual(Self.alpha(in: context, x: 2, y: 2), 0)
+    }
+
+    func testFreehandPathBuilderKeepsSmoothedPathInsidePointBounds() {
+        let points = [
+            CGPoint(x: 8, y: 22),
+            CGPoint(x: 20, y: 6),
+            CGPoint(x: 36, y: 34),
+            CGPoint(x: 52, y: 12),
+            CGPoint(x: 72, y: 28)
+        ]
+
+        let pathBounds = CanvasFreehandPathBuilder.makePath(points: points).boundingBoxOfPath
+        let pointBounds = points.reduce(into: CGRect.null) { partialResult, point in
+            partialResult = partialResult.union(CGRect(origin: point, size: .zero))
+        }
+
+        XCTAssertGreaterThanOrEqual(pathBounds.minX, pointBounds.minX - 0.001)
+        XCTAssertGreaterThanOrEqual(pathBounds.minY, pointBounds.minY - 0.001)
+        XCTAssertLessThanOrEqual(pathBounds.maxX, pointBounds.maxX + 0.001)
+        XCTAssertLessThanOrEqual(pathBounds.maxY, pointBounds.maxY + 0.001)
     }
 
     func testViewportMathFitsCanvasWithinBounds() {
