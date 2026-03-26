@@ -71,15 +71,16 @@ final class CanvasTextInspectorView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.11, green: 0.13, blue: 0.17, alpha: 0.96)
+        backgroundColor = CanvasEditorTheme.sheetSurface
         layer.cornerRadius = 28
+        layer.cornerCurve = .continuous
 
         scrollView.showsVerticalScrollIndicator = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
 
         contentStack.axis = .vertical
-        contentStack.spacing = 16
+        contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
 
@@ -98,10 +99,15 @@ final class CanvasTextInspectorView: UIView {
 
         titleLabel.text = "Text Inspector"
         titleLabel.font = UIFont.systemFont(ofSize: 18, weight: .bold)
-        titleLabel.textColor = .white
+        titleLabel.textColor = CanvasEditorTheme.primaryText
 
-        editTextButton.configuration = .borderedTinted()
-        editTextButton.configuration?.title = "Edit Content"
+        var editButtonConfiguration = UIButton.Configuration.filled()
+        editButtonConfiguration.title = "Edit Content"
+        editButtonConfiguration.baseBackgroundColor = CanvasEditorTheme.accent
+        editButtonConfiguration.baseForegroundColor = .white
+        editButtonConfiguration.cornerStyle = .capsule
+        editButtonConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
+        editTextButton.configuration = editButtonConfiguration
         editTextButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.textInspectorViewDidRequestTextEdit(self)
@@ -119,6 +125,10 @@ final class CanvasTextInspectorView: UIView {
         contentStack.addArrangedSubview(fontSectionView)
 
         alignmentControl.selectedSegmentIndex = 1
+        alignmentControl.selectedSegmentTintColor = CanvasEditorTheme.accent
+        alignmentControl.backgroundColor = CanvasEditorTheme.canvasBackdrop
+        alignmentControl.setTitleTextAttributes([.foregroundColor: CanvasEditorTheme.secondaryText], for: .normal)
+        alignmentControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
         alignmentControl.addAction(UIAction { [weak self] _ in
             self?.didChangeAlignment()
         }, for: .valueChanged)
@@ -266,12 +276,31 @@ final class CanvasTextInspectorView: UIView {
         let label = UILabel()
         label.text = title.uppercased()
         label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = UIColor.white.withAlphaComponent(0.7)
+        label.textColor = CanvasEditorTheme.secondaryText
 
         let stack = UIStackView(arrangedSubviews: [label, view])
         stack.axis = .vertical
-        stack.spacing = 8
-        return stack
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = UIView()
+        container.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 18,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 14,
+            shadowOffset: CGSize(width: 0, height: 8)
+        )
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
+        ])
+        return container
     }
 
     private func measuredContentHeight(for width: CGFloat) -> CGFloat {
@@ -289,8 +318,10 @@ final class CanvasTextInspectorView: UIView {
     }
 
     private func configureToggleButton(_ button: UIButton, title: String, action: @escaping () -> Void) {
-        button.configuration = .bordered()
-        button.configuration?.title = title
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = title
+        configuration.cornerStyle = .large
+        button.configuration = configuration
         button.addAction(UIAction { _ in
             button.isSelected.toggle()
             self.updateToggleButtonAppearance(button)
@@ -300,9 +331,11 @@ final class CanvasTextInspectorView: UIView {
     }
 
     private func updateToggleButtonAppearance(_ button: UIButton) {
-        button.configuration?.baseForegroundColor = button.isSelected ? .black : .white
-        button.configuration?.baseBackgroundColor = button.isSelected ? .white : UIColor.white.withAlphaComponent(0.08)
-        button.configuration?.background.strokeColor = button.isSelected ? .clear : UIColor.white.withAlphaComponent(0.2)
+        button.configuration?.baseForegroundColor = button.isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.primaryText
+        button.configuration?.baseBackgroundColor = button.isSelected ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.canvasBackdrop
+        button.configuration?.background.strokeColor = button.isSelected
+            ? CanvasEditorTheme.accent.withAlphaComponent(0.28)
+            : CanvasEditorTheme.separator
     }
 
     private func didChangeAlignment() {
@@ -381,9 +414,11 @@ private final class InspectorFontFamilyStripView: UIView {
     func setSelectedFontFamily(_ fontFamily: String) {
         buttons.forEach { family, button in
             let isSelected = family == fontFamily
-            button.backgroundColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.08)
-            button.layer.borderColor = isSelected ? UIColor.clear.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
-            button.setTitleColor(isSelected ? .black : .white, for: .normal)
+            button.backgroundColor = isSelected ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.canvasBackdrop
+            button.layer.borderColor = isSelected
+                ? CanvasEditorTheme.accent.withAlphaComponent(0.26).cgColor
+                : CanvasEditorTheme.separator.cgColor
+            button.setTitleColor(isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.primaryText, for: .normal)
         }
     }
 
@@ -399,12 +434,12 @@ private final class InspectorFontFamilyStripView: UIView {
             let font = UIFont(name: fontFamily, size: 15) ?? UIFont.systemFont(ofSize: 15, weight: .medium)
             let titleWidth = ceil((fontFamily as NSString).size(withAttributes: [.font: font]).width) + 32
             button.setTitle(fontFamily, for: .normal)
-            button.setTitleColor(.white, for: .normal)
+            button.setTitleColor(CanvasEditorTheme.primaryText, for: .normal)
             button.titleLabel?.font = font
-            button.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+            button.backgroundColor = CanvasEditorTheme.canvasBackdrop
             button.layer.cornerRadius = 18
             button.layer.borderWidth = 1
-            button.layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
+            button.layer.borderColor = CanvasEditorTheme.separator.cgColor
             button.heightAnchor.constraint(equalToConstant: 38).isActive = true
             button.widthAnchor.constraint(equalToConstant: titleWidth).isActive = true
             button.addAction(UIAction { [weak self] _ in
@@ -666,24 +701,24 @@ private final class InspectorColorChipButton: UIButton {
         case .color(let color):
             swatchView.backgroundColor = color
             ringView.backgroundColor = .clear
-            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.clear.cgColor
+            ringView.layer.borderColor = isSelected ? CanvasEditorTheme.accent.cgColor : UIColor.clear.cgColor
             iconView.image = isSelected ? UIImage(systemName: "checkmark") : nil
             iconView.tintColor = color.isLightColor ? .black : .white
 
         case .clear:
-            swatchView.backgroundColor = UIColor.white.withAlphaComponent(0.96)
-            ringView.backgroundColor = UIColor.white.withAlphaComponent(isSelected ? 0.12 : 0.04)
-            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
+            swatchView.backgroundColor = CanvasEditorTheme.cardSurface
+            ringView.backgroundColor = isSelected ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.canvasBackdrop
+            ringView.layer.borderColor = isSelected ? CanvasEditorTheme.accent.cgColor : CanvasEditorTheme.separator.cgColor
             iconView.image = isSelected ? UIImage(systemName: "checkmark.circle.fill") : UIImage(systemName: "circle")
-            iconView.tintColor = isSelected ? UIColor(red: 0.28, green: 0.51, blue: 1, alpha: 1) : UIColor.black.withAlphaComponent(0.36)
+            iconView.tintColor = isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.secondaryText
 
         case .picker:
-            let resolvedColor = displayedColor ?? UIColor.white.withAlphaComponent(0.08)
+            let resolvedColor = displayedColor ?? CanvasEditorTheme.canvasBackdrop
             swatchView.backgroundColor = resolvedColor
-            ringView.backgroundColor = UIColor.white.withAlphaComponent(isSelected ? 0.08 : 0.02)
-            ringView.layer.borderColor = isSelected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
+            ringView.backgroundColor = isSelected ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.cardSurface
+            ringView.layer.borderColor = isSelected ? CanvasEditorTheme.accent.cgColor : CanvasEditorTheme.separator.cgColor
             iconView.image = UIImage(systemName: displayedColor == nil ? "eyedropper.halffull" : "eyedropper.full")
-            iconView.tintColor = displayedColor?.isLightColor == true ? .black : .white
+            iconView.tintColor = displayedColor?.isLightColor == true ? .black : CanvasEditorTheme.primaryText
         }
     }
 }
@@ -718,11 +753,21 @@ private final class InspectorSliderRow: UIView {
         self.range = range
         super.init(frame: .zero)
 
+        applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 18,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 14,
+            shadowOffset: CGSize(width: 0, height: 8)
+        )
+
         titleLabel.text = title.uppercased()
         titleLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = UIColor.white.withAlphaComponent(0.7)
+        titleLabel.textColor = CanvasEditorTheme.secondaryText
 
-        valueLabel.textColor = .white
+        valueLabel.textColor = CanvasEditorTheme.primaryText
         valueLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         valueLabel.textAlignment = .right
 
@@ -731,8 +776,9 @@ private final class InspectorSliderRow: UIView {
 
         slider.minimumValue = Float(range.lowerBound)
         slider.maximumValue = Float(range.upperBound)
-        slider.minimumTrackTintColor = .white
-        slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.18)
+        slider.minimumTrackTintColor = CanvasEditorTheme.accent
+        slider.maximumTrackTintColor = CanvasEditorTheme.separator
+        slider.thumbTintColor = CanvasEditorTheme.accent
         slider.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             valueLabel.text = String(format: "%.1f", self.value)
@@ -745,10 +791,10 @@ private final class InspectorSliderRow: UIView {
         addSubview(stack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14)
         ])
         value = (range.lowerBound + range.upperBound) / 2
     }
@@ -796,11 +842,12 @@ final class CanvasBrushInspectorView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.11, green: 0.13, blue: 0.17, alpha: 0.96)
+        backgroundColor = CanvasEditorTheme.sheetSurface
         layer.cornerRadius = 28
+        layer.cornerCurve = .continuous
 
         contentStack.axis = .vertical
-        contentStack.spacing = 18
+        contentStack.spacing = 14
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentStack)
 
@@ -870,7 +917,7 @@ final class CanvasBrushInspectorView: UIView {
         cancelButton.configuration = .plain()
         cancelButton.configuration?.image = UIImage(systemName: "xmark")
         cancelButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
-        cancelButton.configuration?.baseForegroundColor = .white
+        cancelButton.configuration?.baseForegroundColor = CanvasEditorTheme.destructive
         cancelButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.canvasBrushInspectorViewDidCancel(self)
@@ -878,13 +925,13 @@ final class CanvasBrushInspectorView: UIView {
 
         titleLabel.text = "Brush"
         titleLabel.font = UIFont.systemFont(ofSize: 18, weight: .semibold)
-        titleLabel.textColor = .white
+        titleLabel.textColor = CanvasEditorTheme.primaryText
         titleLabel.textAlignment = .center
 
         confirmButton.configuration = .plain()
         confirmButton.configuration?.image = UIImage(systemName: "checkmark")
         confirmButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)
-        confirmButton.configuration?.baseForegroundColor = .white
+        confirmButton.configuration?.baseForegroundColor = CanvasEditorTheme.success
         confirmButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.delegate?.canvasBrushInspectorView(self, didConfirm: self.currentConfiguration)
@@ -903,11 +950,12 @@ final class CanvasBrushInspectorView: UIView {
 
         CanvasShapeType.allCases.forEach { shapeType in
             let button = UIButton(type: .system)
-            button.configuration = .bordered()
+            button.configuration = .filled()
             button.configuration?.image = UIImage(systemName: shapeType.systemImageName)
             button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)
-            button.configuration?.baseForegroundColor = .white
-            button.configuration?.baseBackgroundColor = UIColor.white.withAlphaComponent(0.08)
+            button.configuration?.baseForegroundColor = CanvasEditorTheme.primaryText
+            button.configuration?.baseBackgroundColor = CanvasEditorTheme.canvasBackdrop
+            button.configuration?.background.cornerRadius = 16
             button.layer.cornerRadius = 16
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
@@ -932,7 +980,7 @@ final class CanvasBrushInspectorView: UIView {
             button.backgroundColor = color.uiColor
             button.layer.cornerRadius = 18
             button.layer.borderWidth = 2
-            button.layer.borderColor = UIColor.clear.cgColor
+            button.layer.borderColor = CanvasEditorTheme.separator.cgColor
             button.heightAnchor.constraint(equalToConstant: 36).isActive = true
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
@@ -947,8 +995,11 @@ final class CanvasBrushInspectorView: UIView {
     private func updateShapeSelection(selectedType: CanvasShapeType) {
         shapeButtons.forEach { type, button in
             let isSelected = type == selectedType
-            button.configuration?.baseForegroundColor = isSelected ? .black : .white
-            button.configuration?.baseBackgroundColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.08)
+            button.configuration?.baseForegroundColor = isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.primaryText
+            button.configuration?.baseBackgroundColor = isSelected ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.canvasBackdrop
+            button.configuration?.background.strokeColor = isSelected
+                ? CanvasEditorTheme.accent.withAlphaComponent(0.28)
+                : CanvasEditorTheme.separator
         }
     }
 
@@ -957,7 +1008,9 @@ final class CanvasBrushInspectorView: UIView {
             guard let button = subview as? UIButton, palette.indices.contains(index) else {
                 continue
             }
-            button.layer.borderColor = palette[index] == selectedColor ? UIColor.white.cgColor : UIColor.clear.cgColor
+            button.layer.borderColor = palette[index] == selectedColor
+                ? CanvasEditorTheme.accent.cgColor
+                : CanvasEditorTheme.separator.cgColor
         }
     }
 
@@ -965,12 +1018,31 @@ final class CanvasBrushInspectorView: UIView {
         let titleLabel = UILabel()
         titleLabel.text = title
         titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-        titleLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+        titleLabel.textColor = CanvasEditorTheme.secondaryText
 
         let stack = UIStackView(arrangedSubviews: [titleLabel, contentView])
         stack.axis = .vertical
         stack.spacing = 10
-        return stack
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = UIView()
+        container.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 18,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 14,
+            shadowOffset: CGSize(width: 0, height: 8)
+        )
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
+        ])
+        return container
     }
 
     private func notifyConfigurationDidChange() {
@@ -992,9 +1064,9 @@ private final class BrushInspectorSliderRow: UIView {
         let titleLabel = UILabel()
         titleLabel.text = title
         titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-        titleLabel.textColor = UIColor.white.withAlphaComponent(0.82)
+        titleLabel.textColor = CanvasEditorTheme.secondaryText
 
-        valueLabel.textColor = .white
+        valueLabel.textColor = CanvasEditorTheme.primaryText
         valueLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         valueLabel.textAlignment = .right
 
@@ -1003,6 +1075,9 @@ private final class BrushInspectorSliderRow: UIView {
 
         slider.minimumValue = Float(range.lowerBound)
         slider.maximumValue = Float(range.upperBound)
+        slider.minimumTrackTintColor = CanvasEditorTheme.accent
+        slider.maximumTrackTintColor = CanvasEditorTheme.separator
+        slider.thumbTintColor = CanvasEditorTheme.accent
         slider.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.valueLabel.text = String(format: "%.1f", self.slider.value)

@@ -53,11 +53,14 @@ struct CanvasInsertPickerItem: Hashable, Identifiable {
 }
 
 final class CanvasInsertPickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+    private let hiddenSheetOffset: CGFloat = 900
     private let mode: CanvasInsertPickerMode
     private let items: [CanvasInsertPickerItem]
     private let assetLoader: CanvasAssetLoader
     private let onConfirm: ([CanvasInsertPickerItem]) -> Void
     private let itemsByID: [String: CanvasInsertPickerItem]
+    private let scrimView = UIControl()
+    private let sheetContainerView = UIView()
 
     private lazy var collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
@@ -86,6 +89,8 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
     private let emptySelectionLabel = UILabel()
     private let addButton = UIButton(type: .system)
     private let emptyStateLabel = UILabel()
+    private var sheetBottomConstraint: NSLayoutConstraint?
+    private var hasAnimatedPresentation = false
 
     private var selectedItemIDs: [String] = [] {
         didSet {
@@ -119,37 +124,67 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
         updateSelectionUI()
     }
 
-    private func configureSheetPresentation() {
-        view.backgroundColor = UIColor(red: 0.95, green: 0.96, blue: 0.98, alpha: 1)
-
-        if let sheet = sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = false
-            sheet.preferredCornerRadius = 28
-            sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !hasAnimatedPresentation else {
+            return
         }
+
+        hasAnimatedPresentation = true
+        animateSheet(isPresenting: true, completion: nil)
+    }
+
+    private func configureSheetPresentation() {
+        view.backgroundColor = .clear
     }
 
     private func setupLayout() {
+        scrimView.translatesAutoresizingMaskIntoConstraints = false
+        scrimView.backgroundColor = CanvasEditorTheme.scrim
+        scrimView.alpha = 0
+        scrimView.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        view.addSubview(scrimView)
+
+        sheetContainerView.translatesAutoresizingMaskIntoConstraints = false
+        sheetContainerView.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.sheetSurface,
+            cornerRadius: 28,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.surfaceShadow,
+            shadowOpacity: 1,
+            shadowRadius: 24,
+            shadowOffset: CGSize(width: 0, height: -10)
+        )
+        sheetContainerView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.addSubview(sheetContainerView)
+
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.tintColor = .systemRed
+        closeButton.tintColor = CanvasEditorTheme.destructive
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .medium)
-        titleLabel.textColor = UIColor(red: 0.29, green: 0.31, blue: 0.38, alpha: 1)
+        titleLabel.textColor = CanvasEditorTheme.primaryText
         titleLabel.text = mode.title
 
         dividerView.translatesAutoresizingMaskIntoConstraints = false
-        dividerView.backgroundColor = UIColor.black.withAlphaComponent(0.08)
+        dividerView.backgroundColor = CanvasEditorTheme.separator
 
         footerContainer.translatesAutoresizingMaskIntoConstraints = false
-        footerContainer.backgroundColor = view.backgroundColor
+        footerContainer.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 22,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 14,
+            shadowOffset: CGSize(width: 0, height: 8)
+        )
 
         selectedTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         selectedTitleLabel.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        selectedTitleLabel.textColor = UIColor(red: 0.23, green: 0.25, blue: 0.31, alpha: 1)
+        selectedTitleLabel.textColor = CanvasEditorTheme.primaryText
 
         selectedScrollView.translatesAutoresizingMaskIntoConstraints = false
         selectedScrollView.showsHorizontalScrollIndicator = false
@@ -161,14 +196,14 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
 
         emptySelectionLabel.translatesAutoresizingMaskIntoConstraints = false
         emptySelectionLabel.font = UIFont.systemFont(ofSize: 14, weight: .medium)
-        emptySelectionLabel.textColor = UIColor(red: 0.48, green: 0.5, blue: 0.56, alpha: 1)
+        emptySelectionLabel.textColor = CanvasEditorTheme.secondaryText
         emptySelectionLabel.text = "Tap to select."
 
         addButton.translatesAutoresizingMaskIntoConstraints = false
         addButton.configuration = {
             var configuration = UIButton.Configuration.filled()
             configuration.cornerStyle = .capsule
-            configuration.baseBackgroundColor = UIColor(red: 0.97, green: 0.3, blue: 0.28, alpha: 1)
+            configuration.baseBackgroundColor = CanvasEditorTheme.accent
             configuration.baseForegroundColor = .white
             configuration.title = "Add"
             configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
@@ -179,40 +214,52 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
 
         emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyStateLabel.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        emptyStateLabel.textColor = UIColor(red: 0.48, green: 0.5, blue: 0.56, alpha: 1)
+        emptyStateLabel.textColor = CanvasEditorTheme.secondaryText
         emptyStateLabel.textAlignment = .center
         emptyStateLabel.text = mode.emptyStateMessage
         emptyStateLabel.isHidden = !items.isEmpty
 
-        [closeButton, titleLabel, collectionView, emptyStateLabel, dividerView, footerContainer].forEach(view.addSubview)
+        [closeButton, titleLabel, collectionView, emptyStateLabel, dividerView, footerContainer].forEach(sheetContainerView.addSubview)
         [selectedTitleLabel, selectedScrollView, emptySelectionLabel, addButton].forEach(footerContainer.addSubview)
 
+        sheetBottomConstraint = sheetContainerView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: hiddenSheetOffset)
+        sheetBottomConstraint?.isActive = true
+
         NSLayoutConstraint.activate([
-            closeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            scrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrimView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            sheetContainerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sheetContainerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheetContainerView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 96),
+
+            closeButton.leadingAnchor.constraint(equalTo: sheetContainerView.leadingAnchor, constant: 18),
+            closeButton.topAnchor.constraint(equalTo: sheetContainerView.topAnchor, constant: 10),
             closeButton.widthAnchor.constraint(equalToConstant: 28),
             closeButton.heightAnchor.constraint(equalToConstant: 28),
 
-            titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: sheetContainerView.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
 
-            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
-            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            collectionView.leadingAnchor.constraint(equalTo: sheetContainerView.leadingAnchor, constant: 18),
+            collectionView.trailingAnchor.constraint(equalTo: sheetContainerView.trailingAnchor, constant: -18),
             collectionView.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 18),
             collectionView.bottomAnchor.constraint(equalTo: dividerView.topAnchor, constant: -12),
 
-            emptyStateLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            emptyStateLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            emptyStateLabel.leadingAnchor.constraint(equalTo: sheetContainerView.leadingAnchor, constant: 24),
+            emptyStateLabel.trailingAnchor.constraint(equalTo: sheetContainerView.trailingAnchor, constant: -24),
             emptyStateLabel.centerYAnchor.constraint(equalTo: collectionView.centerYAnchor),
 
-            dividerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            dividerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            dividerView.leadingAnchor.constraint(equalTo: sheetContainerView.leadingAnchor, constant: 18),
+            dividerView.trailingAnchor.constraint(equalTo: sheetContainerView.trailingAnchor, constant: -18),
             dividerView.heightAnchor.constraint(equalToConstant: 1),
             dividerView.bottomAnchor.constraint(equalTo: footerContainer.topAnchor),
 
-            footerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            footerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footerContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            footerContainer.leadingAnchor.constraint(equalTo: sheetContainerView.leadingAnchor, constant: 18),
+            footerContainer.trailingAnchor.constraint(equalTo: sheetContainerView.trailingAnchor, constant: -18),
+            footerContainer.bottomAnchor.constraint(equalTo: sheetContainerView.safeAreaLayoutGuide.bottomAnchor, constant: -14),
 
             selectedTitleLabel.leadingAnchor.constraint(equalTo: footerContainer.leadingAnchor, constant: 20),
             selectedTitleLabel.trailingAnchor.constraint(equalTo: footerContainer.trailingAnchor, constant: -20),
@@ -244,6 +291,22 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
         selectedItemIDs.compactMap { itemsByID[$0] }
     }
 
+    private func animateSheet(isPresenting: Bool, completion: (() -> Void)?) {
+        sheetBottomConstraint?.constant = isPresenting ? 0 : hiddenSheetOffset
+        UIView.animate(
+            withDuration: 0.28,
+            delay: 0,
+            usingSpringWithDamping: isPresenting ? 0.92 : 1,
+            initialSpringVelocity: 0.2,
+            options: [.curveEaseOut]
+        ) {
+            self.scrimView.alpha = isPresenting ? 1 : 0
+            self.view.layoutIfNeeded()
+        } completion: { _ in
+            completion?()
+        }
+    }
+
     private func updateSelectionUI() {
         selectedTitleLabel.text = selectedItemIDs.isEmpty ? "Selected" : "Selected (\(selectedItemIDs.count))"
         emptySelectionLabel.isHidden = !selectedItemIDs.isEmpty
@@ -268,17 +331,17 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
     }
 
     private func makeSelectedItemButton(for item: CanvasInsertPickerItem) -> UIButton {
-        let button = UIButton(type: .system)
+        let button = UIButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.widthAnchor.constraint(equalToConstant: 58).isActive = true
         button.heightAnchor.constraint(equalToConstant: 58).isActive = true
-        button.backgroundColor = UIColor.white.withAlphaComponent(0.82)
+        button.backgroundColor = CanvasEditorTheme.cardSurface
         button.layer.cornerRadius = 18
         button.layer.cornerCurve = .continuous
-        button.layer.borderColor = UIColor.systemRed.withAlphaComponent(0.18).cgColor
+        button.layer.borderColor = CanvasEditorTheme.separator.cgColor
         button.layer.borderWidth = 1
         button.clipsToBounds = true
-        button.tintColor = UIColor(red: 0.23, green: 0.25, blue: 0.31, alpha: 1)
+        button.tintColor = CanvasEditorTheme.primaryText
         button.accessibilityIdentifier = item.id
         button.addAction(UIAction { [weak self] _ in
             self?.toggleSelection(for: item.id)
@@ -291,14 +354,24 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
             button.setTitleColor(.label, for: .normal)
 
         case .asset(let source):
-            button.setImage(assetLoader.imageSynchronously(for: source), for: .normal)
-            button.imageView?.contentMode = .scaleAspectFit
-            button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+            let imageView = UIImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.contentMode = .scaleAspectFit
+            imageView.isUserInteractionEnabled = false
+            imageView.image = assetLoader.imageSynchronously(for: source)
+            button.addSubview(imageView)
+            NSLayoutConstraint.activate([
+                imageView.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 10),
+                imageView.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -10),
+                imageView.topAnchor.constraint(equalTo: button.topAnchor, constant: 10),
+                imageView.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -10)
+            ])
             assetLoader.image(for: source) { [weak button] image in
                 guard button?.accessibilityIdentifier == item.id else {
                     return
                 }
-                button?.setImage(image, for: .normal)
+                let imageView = button?.subviews.compactMap { $0 as? UIImageView }.first
+                imageView?.image = image
             }
         }
 
@@ -319,7 +392,9 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
 
     @objc
     private func closeTapped() {
-        dismiss(animated: true)
+        animateSheet(isPresenting: false) {
+            self.dismiss(animated: false)
+        }
     }
 
     @objc
@@ -329,8 +404,10 @@ final class CanvasInsertPickerSheetViewController: UIViewController, UICollectio
             return
         }
 
-        dismiss(animated: true) { [onConfirm] in
-            onConfirm(itemsToInsert)
+        animateSheet(isPresenting: false) { [onConfirm] in
+            self.dismiss(animated: false) {
+                onConfirm(itemsToInsert)
+            }
         }
     }
 
@@ -403,7 +480,7 @@ private final class CanvasInsertPickerCell: UICollectionViewCell {
         tileView.addSubview(imageView)
 
         pickedBadgeView.translatesAutoresizingMaskIntoConstraints = false
-        pickedBadgeView.tintColor = .systemRed
+        pickedBadgeView.tintColor = CanvasEditorTheme.accent
         pickedBadgeView.isHidden = true
         contentView.addSubview(pickedBadgeView)
 
@@ -453,12 +530,12 @@ private final class CanvasInsertPickerCell: UICollectionViewCell {
         representedItemID = item.id
         pickedBadgeView.isHidden = !isPicked
         tileView.backgroundColor = isPicked
-            ? UIColor.systemRed.withAlphaComponent(0.1)
-            : UIColor.white.withAlphaComponent(0.74)
+            ? CanvasEditorTheme.accentMuted
+            : CanvasEditorTheme.cardSurface
         tileView.layer.borderColor = isPicked
-            ? UIColor.systemRed.cgColor
-            : UIColor.clear.cgColor
-        tileView.layer.borderWidth = isPicked ? 2 : 0
+            ? CanvasEditorTheme.accent.cgColor
+            : CanvasEditorTheme.separator.cgColor
+        tileView.layer.borderWidth = isPicked ? 2 : 1
 
         switch item.preview {
         case .emoji(let emoji):

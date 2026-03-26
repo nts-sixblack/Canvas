@@ -46,16 +46,16 @@ final class OverlayHandleControl: UIControl {
     private let imageView = UIImageView()
 
     init(systemImage: String, tintColor: UIColor = .black) {
-        super.init(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
+        super.init(frame: CGRect(x: 0, y: 0, width: 60, height: 60))
         backgroundColor = .white
-        layer.cornerRadius = 15
+        layer.cornerRadius = 30
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.25
         layer.shadowRadius = 8
         layer.shadowOffset = CGSize(width: 0, height: 4)
 
         imageView.image = UIImage(systemName: systemImage)
-        imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+        imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 33, weight: .bold)
         imageView.tintColor = tintColor
         imageView.contentMode = .center
         addSubview(imageView)

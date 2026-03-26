@@ -115,14 +115,16 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.08, green: 0.1, blue: 0.14, alpha: 1)
+        backgroundColor = CanvasEditorTheme.canvasBackdrop
 
         canvasContainerView.backgroundColor = .clear
-        canvasContainerView.layer.shadowColor = UIColor.black.cgColor
-        canvasContainerView.layer.shadowOpacity = 0.3
-        canvasContainerView.layer.shadowRadius = 18
-        canvasContainerView.layer.shadowOffset = CGSize(width: 0, height: 10)
+        canvasContainerView.layer.shadowColor = CanvasEditorTheme.surfaceShadow.cgColor
+        canvasContainerView.layer.shadowOpacity = 1
+        canvasContainerView.layer.shadowRadius = 24
+        canvasContainerView.layer.shadowOffset = CGSize(width: 0, height: 14)
         contentContainerView.clipsToBounds = true
+        contentContainerView.layer.cornerRadius = 28
+        contentContainerView.layer.cornerCurve = .continuous
 
         backgroundImageView.contentMode = .scaleAspectFill
         backgroundImageView.clipsToBounds = true
@@ -223,6 +225,10 @@ final class CanvasStageView: UIView, UIGestureRecognizerDelegate, UITextViewDele
         canvasContainerView.bounds = CGRect(origin: .zero, size: canvasSize)
         canvasContainerView.center = CGPoint(x: bounds.midX, y: bounds.midY)
         canvasContainerView.transform = CGAffineTransform(scaleX: canvasScale, y: canvasScale)
+        canvasContainerView.layer.shadowPath = UIBezierPath(
+            roundedRect: CGRect(origin: .zero, size: canvasSize),
+            cornerRadius: contentContainerView.layer.cornerRadius
+        ).cgPath
 
         contentContainerView.frame = CGRect(origin: .zero, size: canvasSize)
         backgroundColorView.frame = contentContainerView.bounds

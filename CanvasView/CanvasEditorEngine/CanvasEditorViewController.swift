@@ -57,15 +57,15 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     private let historyActionsContainer = UIView()
     private let historyActionsStack = UIStackView()
     private let toolbarGridStack = UIStackView()
+    private let panelScrimView = UIControl()
     private let inspectorContainerView = UIView()
     private let textInspectorView = CanvasTextInspectorView()
     private let brushInspectorView = CanvasBrushInspectorView()
     private let loadingOverlayView = CanvasLoadingOverlayView()
-    private let layerPanelScrimView = UIControl()
     private let layerPanelView = CanvasLayerPanelView()
 
     private let toolbarTileHeight: CGFloat = 82
-    private let historyButtonSize: CGFloat = 50
+    private let historyButtonSize: CGFloat = 58
     private let inspectorMaximumHeight: CGFloat = 360
     private let inspectorMinimumTopMargin: CGFloat = 44
     private let inspectorVisibleOffset: CGFloat = 0
@@ -148,7 +148,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.07, green: 0.08, blue: 0.12, alpha: 1)
+        view.backgroundColor = CanvasEditorTheme.canvasBackdrop
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             title: "Close",
@@ -179,31 +179,36 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         updateBrushButtonAppearance()
         updateEraserButtonAppearance()
         updateInspectorMetrics()
+        refreshChrome()
     }
 
     private func setupLayout() {
-        [stageView, bottomPanel, historyActionsContainer, inspectorContainerView, layerPanelScrimView, layerPanelView, loadingOverlayView].forEach {
+        [stageView, bottomPanel, historyActionsContainer, panelScrimView, inspectorContainerView, layerPanelView, loadingOverlayView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
 
-        bottomPanel.backgroundColor = UIColor(red: 0.1, green: 0.11, blue: 0.15, alpha: 0.98)
+        bottomPanel.backgroundColor = CanvasEditorTheme.cardSurface
         bottomPanel.layer.cornerRadius = 30
         bottomPanel.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         bottomPanel.layer.cornerCurve = .continuous
+        bottomPanel.layer.shadowColor = CanvasEditorTheme.surfaceShadow.cgColor
+        bottomPanel.layer.shadowOpacity = 1
+        bottomPanel.layer.shadowRadius = 22
+        bottomPanel.layer.shadowOffset = CGSize(width: 0, height: -10)
 
         historyActionsStack.translatesAutoresizingMaskIntoConstraints = false
         historyActionsStack.axis = .horizontal
-        historyActionsStack.spacing = 14
+        historyActionsStack.spacing = 12
         historyActionsContainer.addSubview(historyActionsStack)
 
         inspectorContainerView.backgroundColor = .clear
         inspectorContainerView.alpha = 0
 
-        layerPanelScrimView.backgroundColor = .clear
-        layerPanelScrimView.alpha = 0
-        layerPanelScrimView.isHidden = true
-        layerPanelScrimView.addTarget(self, action: #selector(layerPanelBackdropTapped), for: .touchUpInside)
+        panelScrimView.backgroundColor = .clear
+        panelScrimView.alpha = 0
+        panelScrimView.isHidden = true
+        panelScrimView.addTarget(self, action: #selector(panelScrimTapped), for: .touchUpInside)
 
         layerPanelView.alpha = 0
         layerPanelView.isHidden = true
@@ -232,10 +237,10 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         inspectorHeightConstraint?.isActive = true
         layerPanelHeightConstraint?.isActive = true
 
-        inspectorContainerView.layer.shadowColor = UIColor.black.cgColor
-        inspectorContainerView.layer.shadowOpacity = 0.24
-        inspectorContainerView.layer.shadowRadius = 18
-        inspectorContainerView.layer.shadowOffset = CGSize(width: 0, height: -8)
+        inspectorContainerView.layer.shadowColor = CanvasEditorTheme.surfaceShadow.cgColor
+        inspectorContainerView.layer.shadowOpacity = 1
+        inspectorContainerView.layer.shadowRadius = 24
+        inspectorContainerView.layer.shadowOffset = CGSize(width: 0, height: -10)
 
         NSLayoutConstraint.activate([
             stageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -273,10 +278,10 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             brushInspectorView.topAnchor.constraint(equalTo: inspectorContainerView.topAnchor),
             brushInspectorView.bottomAnchor.constraint(equalTo: inspectorContainerView.bottomAnchor),
 
-            layerPanelScrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            layerPanelScrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            layerPanelScrimView.topAnchor.constraint(equalTo: view.topAnchor),
-            layerPanelScrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            panelScrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            panelScrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            panelScrimView.topAnchor.constraint(equalTo: view.topAnchor),
+            panelScrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             layerPanelView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -14),
             layerPanelView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -363,17 +368,46 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         updateVisibleInspector(animated: true)
     }
 
+    private var shouldShowPanelScrim: Bool {
+        isInspectorVisible || isLayerPanelVisible
+    }
+
+    private func prepareForPanelPresentation(_ overlayView: UIView) {
+        panelScrimView.isHidden = false
+        view.bringSubviewToFront(panelScrimView)
+        view.bringSubviewToFront(overlayView)
+        view.bringSubviewToFront(loadingOverlayView)
+    }
+
+    private func updatePanelScrimVisibility() {
+        panelScrimView.alpha = shouldShowPanelScrim ? 1 : 0
+        panelScrimView.backgroundColor = shouldShowPanelScrim ? CanvasEditorTheme.scrim : .clear
+    }
+
+    private func finalizePanelScrimIfNeeded() {
+        panelScrimView.isHidden = !shouldShowPanelScrim
+    }
+
     private func setInspectorVisible(_ visible: Bool, animated: Bool) {
+        if visible {
+            prepareForPanelPresentation(inspectorContainerView)
+        }
+
         isInspectorVisible = visible
         updateInspectorMetrics()
         let changes = {
             self.inspectorContainerView.alpha = visible ? 1 : 0
+            self.updatePanelScrimVisibility()
             self.view.layoutIfNeeded()
         }
+        let completion: (Bool) -> Void = { _ in
+            self.finalizePanelScrimIfNeeded()
+        }
         if animated {
-            UIView.animate(withDuration: 0.24, animations: changes)
+            UIView.animate(withDuration: 0.24, animations: changes, completion: completion)
         } else {
             changes()
+            completion(true)
         }
     }
 
@@ -501,7 +535,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func updateLayerButtonAppearance() {
         layersBarButtonItem.tintColor = isLayerPanelVisible
-            ? UIColor(red: 0.47, green: 0.85, blue: 1, alpha: 1)
+            ? CanvasEditorTheme.accent
             : .white
     }
 
@@ -514,27 +548,23 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
         updateLayerButtonAppearance()
 
         if visible {
-            layerPanelScrimView.isHidden = false
+            prepareForPanelPresentation(layerPanelView)
             layerPanelView.isHidden = false
             layerPanelView.isUserInteractionEnabled = loadingState == .none
-            view.bringSubviewToFront(layerPanelScrimView)
-            view.bringSubviewToFront(layerPanelView)
-            view.bringSubviewToFront(loadingOverlayView)
         }
 
         let changes = {
-            self.layerPanelScrimView.alpha = visible ? 1 : 0
-            self.layerPanelScrimView.backgroundColor = UIColor.black.withAlphaComponent(visible ? 0.16 : 0)
             self.layerPanelView.alpha = visible ? 1 : 0
             self.layerPanelView.transform = visible ? .identity : self.layerPanelHiddenTransform
+            self.updatePanelScrimVisibility()
         }
 
         let completion: (Bool) -> Void = { _ in
             if !visible {
-                self.layerPanelScrimView.isHidden = true
                 self.layerPanelView.isHidden = true
                 self.layerPanelView.isUserInteractionEnabled = false
             }
+            self.finalizePanelScrimIfNeeded()
         }
 
         if animated {
@@ -566,21 +596,34 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func makeGridToolButton(title: String, systemImage: String) -> UIButton {
         let button = UIButton(type: .system)
-        var configuration = UIButton.Configuration.filled()
+        var configuration = UIButton.Configuration.plain()
         var titleAttributes = AttributeContainer()
-        titleAttributes.font = UIFont.systemFont(ofSize: 15, weight: .medium)
+        titleAttributes.font = UIFont.systemFont(ofSize: 14, weight: .medium)
         configuration.attributedTitle = AttributedString(title, attributes: titleAttributes)
         configuration.image = UIImage(systemName: systemImage)
         configuration.imagePlacement = .top
-        configuration.imagePadding = 10
+        configuration.imagePadding = 8
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 8, bottom: 14, trailing: 8)
-        configuration.baseForegroundColor = .white
-        configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.08)
-        configuration.cornerStyle = .large
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 8, bottom: 12, trailing: 8)
+        configuration.background.cornerRadius = 20
         button.configuration = configuration
         button.layer.cornerRadius = 22
         button.layer.cornerCurve = .continuous
+        button.configurationUpdateHandler = { button in
+            guard var updatedConfiguration = button.configuration else {
+                return
+            }
+            let foregroundColor: UIColor
+            if button.isEnabled {
+                foregroundColor = button.isSelected ? CanvasEditorTheme.accent : CanvasEditorTheme.primaryText
+            } else {
+                foregroundColor = CanvasEditorTheme.secondaryText.withAlphaComponent(0.7)
+            }
+            updatedConfiguration.baseForegroundColor = foregroundColor
+            updatedConfiguration.baseBackgroundColor = button.isSelected ? CanvasEditorTheme.accentMuted : .clear
+            button.configuration = updatedConfiguration
+            button.alpha = button.isEnabled ? 1 : 0.45
+        }
         button.heightAnchor.constraint(equalToConstant: toolbarTileHeight).isActive = true
         return button
     }
@@ -592,29 +635,44 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
         configuration.image = UIImage(systemName: brushConfiguration.type.systemImageName)
         addBrushButton.configuration = configuration
+        addBrushButton.setNeedsUpdateConfiguration()
     }
 
     private func updateEraserButtonAppearance() {
-        guard var configuration = eraserButton.configuration else {
-            return
-        }
-
-        configuration.baseForegroundColor = isEraserModeEnabled ? .black : .white
-        configuration.baseBackgroundColor = isEraserModeEnabled ? .white : UIColor.white.withAlphaComponent(0.08)
-        eraserButton.configuration = configuration
+        eraserButton.isSelected = isEraserModeEnabled
+        eraserButton.setNeedsUpdateConfiguration()
     }
 
     private func makeHistoryButton(title: String, systemImage: String) -> UIButton {
         let button = UIButton(type: .system)
-        var configuration = UIButton.Configuration.filled()
+        var configuration = UIButton.Configuration.plain()
         configuration.image = UIImage(systemName: systemImage)
-        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
-        configuration.baseForegroundColor = .white
-        configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.12)
-        configuration.cornerStyle = .capsule
+        configuration.background.backgroundColor = CanvasEditorTheme.cardSurface
+        configuration.background.cornerRadius = 18
         button.configuration = configuration
         button.accessibilityLabel = title
+        button.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 18,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 18,
+            shadowOffset: CGSize(width: 0, height: 10)
+        )
+        button.configurationUpdateHandler = { button in
+            guard var updatedConfiguration = button.configuration else {
+                return
+            }
+            updatedConfiguration.baseForegroundColor = button.isEnabled
+                ? CanvasEditorTheme.primaryText
+                : CanvasEditorTheme.secondaryText
+            updatedConfiguration.background.backgroundColor = CanvasEditorTheme.cardSurface
+            button.configuration = updatedConfiguration
+            button.alpha = button.isEnabled ? 1 : 0.5
+        }
         button.widthAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
         button.heightAnchor.constraint(equalToConstant: historyButtonSize).isActive = true
         return button
@@ -628,10 +686,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
 
     private func dismissEditingOverlays(animated: Bool) {
         dismissInspector(animated: animated)
+        setLayerPanelVisible(false, animated: animated)
         cancelActiveToolMode()
     }
 
     private func presentBrushInspector(mode: BrushInspectorMode, configuration: CanvasBrushConfiguration) {
+        setLayerPanelVisible(false, animated: true)
         isInspectorRequested = false
         brushInspectorMode = mode
         brushConfiguration = configuration
@@ -768,13 +828,8 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     private func presentInsertPicker(_ picker: UIViewController) {
-        picker.modalPresentationStyle = .pageSheet
-        if let sheet = picker.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = false
-            sheet.preferredCornerRadius = 28
-            sheet.prefersScrollingExpandsWhenScrolledToEdge = false
-        }
+        setLayerPanelVisible(false, animated: true)
+        picker.modalPresentationStyle = .overFullScreen
         present(picker, animated: true)
     }
 
@@ -836,6 +891,7 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
             return
         }
         cancelActiveToolMode()
+        setLayerPanelVisible(false, animated: true)
         brushInspectorMode = nil
         isInspectorRequested.toggle()
         refreshChrome()
@@ -1007,8 +1063,12 @@ final class CanvasEditorViewController: UIViewController, CanvasTextInspectorVie
     }
 
     @objc
-    private func layerPanelBackdropTapped() {
-        setLayerPanelVisible(false, animated: true)
+    private func panelScrimTapped() {
+        if isLayerPanelVisible {
+            setLayerPanelVisible(false, animated: true)
+        } else if isInspectorVisible {
+            dismissInspector(animated: true)
+        }
     }
 
     @objc
@@ -1142,18 +1202,20 @@ final class CanvasLayerPanelView: UIView, UITableViewDataSource, UITableViewDele
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        backgroundColor = UIColor(red: 0.16, green: 0.17, blue: 0.21, alpha: 0.98)
-        layer.cornerRadius = 24
-        layer.cornerCurve = .continuous
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.28
-        layer.shadowRadius = 24
-        layer.shadowOffset = CGSize(width: 0, height: 12)
+        applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.sheetSurface,
+            cornerRadius: 24,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.surfaceShadow,
+            shadowOpacity: 1,
+            shadowRadius: 24,
+            shadowOffset: CGSize(width: 0, height: 12)
+        )
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "Layers"
         titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.textColor = .white
+        titleLabel.textColor = CanvasEditorTheme.primaryText
         addSubview(titleLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -1287,8 +1349,15 @@ final class CanvasLayerPanelCell: UITableViewCell {
         selectionStyle = .none
 
         rowBackgroundView.translatesAutoresizingMaskIntoConstraints = false
-        rowBackgroundView.layer.cornerRadius = 16
-        rowBackgroundView.layer.cornerCurve = .continuous
+        rowBackgroundView.applyCanvasEditorCardStyle(
+            backgroundColor: CanvasEditorTheme.cardSurface,
+            cornerRadius: 16,
+            borderColor: CanvasEditorTheme.separator,
+            shadowColor: CanvasEditorTheme.controlShadow,
+            shadowOpacity: 1,
+            shadowRadius: 12,
+            shadowOffset: CGSize(width: 0, height: 6)
+        )
         contentView.addSubview(rowBackgroundView)
 
         previewContainerView.translatesAutoresizingMaskIntoConstraints = false
@@ -1308,12 +1377,12 @@ final class CanvasLayerPanelCell: UITableViewCell {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        titleLabel.textColor = .white
+        titleLabel.textColor = CanvasEditorTheme.primaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         rowBackgroundView.addSubview(titleLabel)
 
         lockButton.translatesAutoresizingMaskIntoConstraints = false
-        lockButton.tintColor = .white
+        lockButton.tintColor = CanvasEditorTheme.secondaryText
         lockButton.addAction(UIAction { [weak self] _ in
             self?.onToggleLock?()
         }, for: .touchUpInside)
@@ -1363,12 +1432,15 @@ final class CanvasLayerPanelCell: UITableViewCell {
 
     func configure(node: CanvasNode, isSelectedInPanel: Bool) {
         let isLocked = !node.isEditable
-        rowBackgroundView.backgroundColor = UIColor.white.withAlphaComponent(isSelectedInPanel ? 0.18 : 0.08)
+        rowBackgroundView.backgroundColor = isSelectedInPanel ? CanvasEditorTheme.accentMuted : CanvasEditorTheme.cardSurface
+        rowBackgroundView.layer.borderColor = (isSelectedInPanel
+            ? CanvasEditorTheme.accent.withAlphaComponent(0.22)
+            : CanvasEditorTheme.separator).cgColor
         rowBackgroundView.alpha = isLocked ? 0.58 : 1
         titleLabel.text = Self.displayTitle(for: node)
-        titleLabel.textColor = .white
+        titleLabel.textColor = CanvasEditorTheme.primaryText
         lockButton.setImage(UIImage(systemName: isLocked ? "lock.fill" : "lock.open"), for: .normal)
-        lockButton.tintColor = isLocked ? UIColor(red: 1, green: 0.8, blue: 0.82, alpha: 1) : UIColor.white.withAlphaComponent(0.78)
+        lockButton.tintColor = isLocked ? CanvasEditorTheme.destructive : CanvasEditorTheme.secondaryText
 
         previewContainerView.backgroundColor = Self.previewBackground(for: node)
         previewLabel.isHidden = false
@@ -1377,26 +1449,26 @@ final class CanvasLayerPanelCell: UITableViewCell {
         switch node.kind {
         case .text:
             previewLabel.text = "T"
-            previewLabel.textColor = node.style?.foregroundColor.uiColor ?? .white
+            previewLabel.textColor = node.style?.foregroundColor.uiColor ?? CanvasEditorTheme.primaryText
         case .emoji:
             previewLabel.text = String((node.text ?? "🙂").prefix(1))
-            previewLabel.textColor = .white
+            previewLabel.textColor = CanvasEditorTheme.primaryText
         case .sticker:
             previewImageView.isHidden = false
             previewLabel.isHidden = true
             let stickerImage = Self.previewAssetLoader.imageSynchronously(for: node.source)
             previewImageView.image = stickerImage ?? UIImage(systemName: node.source?.name ?? "sparkles")
-            previewImageView.tintColor = stickerImage == nil ? (node.style?.foregroundColor.uiColor ?? .white) : nil
+            previewImageView.tintColor = stickerImage == nil ? (node.style?.foregroundColor.uiColor ?? CanvasEditorTheme.primaryText) : nil
         case .image:
             previewImageView.isHidden = false
             previewLabel.isHidden = true
             previewImageView.image = UIImage(systemName: "photo")
-            previewImageView.tintColor = .white
+            previewImageView.tintColor = CanvasEditorTheme.primaryText
         case .shape:
             previewImageView.isHidden = false
             previewLabel.isHidden = true
             previewImageView.image = UIImage(systemName: node.shape?.type.systemImageName ?? "paintbrush")
-            previewImageView.tintColor = node.shape?.strokeColor.uiColor ?? .white
+            previewImageView.tintColor = node.shape?.strokeColor.uiColor ?? CanvasEditorTheme.primaryText
         }
     }
 
@@ -1426,15 +1498,15 @@ final class CanvasLayerPanelCell: UITableViewCell {
     private static func previewBackground(for node: CanvasNode) -> UIColor {
         switch node.kind {
         case .text:
-            return UIColor(red: 0.99, green: 0.45, blue: 0.36, alpha: 0.28)
+            return UIColor(red: 0.99, green: 0.77, blue: 0.71, alpha: 1)
         case .emoji:
-            return UIColor(red: 0.95, green: 0.73, blue: 0.24, alpha: 0.3)
+            return UIColor(red: 1, green: 0.94, blue: 0.7, alpha: 1)
         case .sticker:
-            return UIColor(red: 0.49, green: 0.79, blue: 1, alpha: 0.28)
+            return UIColor(red: 0.82, green: 0.92, blue: 1, alpha: 1)
         case .image:
-            return UIColor.white.withAlphaComponent(0.18)
+            return CanvasEditorTheme.canvasBackdrop
         case .shape:
-            return UIColor(red: 0.46, green: 0.86, blue: 0.62, alpha: 0.22)
+            return UIColor(red: 0.84, green: 0.96, blue: 0.88, alpha: 1)
         }
     }
 }
